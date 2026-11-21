@@ -35,10 +35,14 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* vol of geblokkeerd */ } },
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* negeren */ } }
   };
-  function restart() {
-    const u = location.origin + location.pathname;
-    if (location.href === u) location.reload(); else location.href = u;
+  /** Ga naar een adres binnen de app en laad de pagina echt opnieuw, ook als alleen het #-deel verandert. */
+  function goTo(u) {
+    const base = (x) => x.split('#')[0];
+    const sameDoc = base(u) === base(location.href);
+    location.href = u;
+    if (sameDoc) location.reload();
   }
+  const restart = () => goTo(location.origin + location.pathname);
   const buzz = (ms) => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* negeren */ } };
 
   // ------------------------------------------------------------ config
@@ -70,17 +74,30 @@
     { label: 'Bier', par: 2 }, { label: 'Wijn', par: 3 }, { label: 'Shotje', par: 1 },
     { label: 'Mixdrankje', par: 3 }, { label: 'Speciaalbier', par: 4 }, { label: 'Fris / 0.0', par: 2 }
   ];
-  const DEFAULT_HOLES = [
-    { name: 'Kroeg 1', type: 'fixed', drink: 'Biertje', par: 2 },
-    { name: 'Kroeg 2', type: 'fixed', drink: 'Wijntje', par: 3 },
-    { name: 'Kroeg 3', type: 'wheel', wheelMode: 'player', options: DEFAULT_WHEEL },
-    { name: 'Kroeg 4', type: 'fixed', drink: 'Speciaalbier', par: 4 },
-    { name: 'Kroeg 5', type: 'fixed', drink: 'Shotje', par: 1 },
-    { name: 'Kroeg 6', type: 'wheel', wheelMode: 'player', options: DEFAULT_WHEEL },
-    { name: 'Kroeg 7', type: 'fixed', drink: 'Mixdrankje', par: 3 },
-    { name: 'Kroeg 8', type: 'fixed', drink: 'Cider', par: 3 },
-    { name: 'Kroeg 9', type: 'fixed', drink: 'Halve liter bier', par: 4 }
+  const DEFAULT_DRINK = { type: 'fixed', drink: 'Drankje naar keuze', par: 3 };
+  // Standaardroute: Pubgolf Zwolle, 14 kroegen in loopvolgorde.
+  const ROUTE_CITY = 'Zwolle';
+  const ROUTE_ZWOLLE = [
+    { name: 'Café ’t Beugeltje', addr: 'Krabbestraat 63' },
+    { name: 'Café De Tagrijn', addr: 'Buitenkant 8' },
+    { name: '’t Swolsch Café', addr: 'Melkmarkt 37' },
+    { name: 'De Belgische Keijzer', addr: 'Melkmarkt 58' },
+    { name: 'Café De Blauwvinger', addr: 'Melkmarktstraat 6' },
+    { name: 'DAVO', addr: 'Grote Kerkplein 9' },
+    { name: 'Het Refter', addr: 'Bethlehemkerkplein 35A' },
+    { name: 'The Dublin House', addr: 'Bethlehemkerkplein 46', drink: 'Guinness', par: 4, task: 'Split the G', win: -2, lose: 2 },
+    { name: 'Café De Gezelligheid', addr: 'Gasthuisplein 11' },
+    { name: 'Café Koos', addr: 'Nieuwe Markt 11' },
+    { name: 'Café De Hete Brij', addr: 'Nieuwe Markt 9' },
+    { name: 'Jack’s Music Bar', addr: 'Sassenstraat 29' },
+    { name: 'Bonabo Social Club', addr: 'Voorstraat 3' },
+    { name: 'Het Vliegende Paard', addr: 'Voorstraat 17' }
   ];
+  function seedHoles(route) {
+    const holes = {};
+    route.forEach((h, i) => { holes['h' + uid(6)] = Object.assign({ order: i + 1 }, DEFAULT_DRINK, clone(h)); });
+    return holes;
+  }
   const DEFAULT_PENS = [
     { l: 'Gemorst', n: 1 }, { l: 'Te laat bij de hole', n: 1 }, { l: 'Glas omgegooid', n: 2 }
   ];
@@ -104,7 +121,7 @@
   };
   const ui = {
     tab: 'holes', hole: (history.state && history.state.hole) || null, pid: null, editing: false,
-    editHoles: false, spinning: false, joinEmoji: EMOJIS[randInt(EMOJIS.length)], wheelRot: {}, scroll: {}
+    editHoles: false, spinning: false, route: 'zwolle', joinEmoji: EMOJIS[randInt(EMOJIS.length)], wheelRot: {}, scroll: {}
   };
 
   function setAt(root, path, value) {
@@ -323,9 +340,9 @@
     if (!p || !hole) return;
     const sc = scoreOf(pid, hid);
     const info = holeInfo(hole, pid);
-    const st = strokesOf(sc, info.par);
+    const st = strokesOf(sc, info.par, hole);
     if (st == null) return;
-    const term = termFor(sc, st, info.par);
+    const term = termFor(sc, st, info.par, hole);
     toast(`${p.emoji || '🍺'} ${p.name}: ${term.t} op hole ${holeNo(hid)}`, term.cls === 'hio' ? 'gold' : '');
   }
 
@@ -362,14 +379,25 @@
     return { drink: null, par: null, needSpin: true };
   }
   const penTotal = (sc) => (sc && Array.isArray(sc.pens) ? sc.pens.reduce((a, p) => a + (p ? +p.n || 0 : 0), 0) : 0);
-  function strokesOf(sc, par) {
-    if (!sc || !sc.done || par == null) return null;
-    return (sc.dnf ? par + dnfExtra() : Math.max(1, +sc.sips || 1)) + penTotal(sc);
+  const city = () => (S.data.meta && S.data.meta.city) || '';
+  const holePens = (hole) => (hole && Array.isArray(hole.hp) ? hole.hp.filter(Boolean) : []);
+  /** Slagen erbij of eraf door de opdracht van een kroeg (bijv. Split the G). */
+  const taskMod = (hole, sc) => (hole && hole.task && sc ? (sc.task === 'w' ? +hole.win || 0 : sc.task === 'l' ? +hole.lose || 0 : 0) : 0);
+  const fmtMod = (n) => (n > 0 ? '+' + n : n < 0 ? '−' + Math.abs(n) : '±0');
+  const hasGeo = (h) => !!h && h.lat != null && h.lng != null && Number.isFinite(+h.lat) && Number.isFinite(+h.lng);
+  function navUrl(h) {
+    const dest = h.addr ? [h.name, h.addr, city()].filter(Boolean).join(', ')
+      : hasGeo(h) ? (+h.lat).toFixed(6) + ',' + (+h.lng).toFixed(6) : [h.name, city()].filter(Boolean).join(', ');
+    return 'https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=' + encodeURIComponent(dest);
   }
-  function termFor(sc, strokes, par) {
+  function strokesOf(sc, par, hole) {
+    if (!sc || !sc.done || par == null) return null;
+    return (sc.dnf ? par + dnfExtra() : Math.max(1, +sc.sips || 1)) + penTotal(sc) + taskMod(hole, sc);
+  }
+  function termFor(sc, strokes, par, hole) {
     const d = strokes - par;
     if (sc.dnf) return { t: 'Niet opgedronken', cls: 'bad' };
-    if (+sc.sips === 1 && par >= 2 && !penTotal(sc)) return { t: 'Hole-in-one! 🎯', cls: 'hio' };
+    if (+sc.sips === 1 && par >= 2 && !penTotal(sc) && taskMod(hole, sc) <= 0) return { t: 'Hole-in-one! 🎯', cls: 'hio' };
     if (d <= -3) return { t: 'Albatros', cls: 'good' };
     if (d === -2) return { t: 'Eagle', cls: 'good' };
     if (d === -1) return { t: 'Birdie', cls: 'good' };
@@ -386,7 +414,7 @@
     for (const h of holesList()) {
       const sc = scoreOf(pid, h.id);
       const info = holeInfo(h, pid);
-      const st = strokesOf(sc, info.par);
+      const st = strokesOf(sc, info.par, h);
       if (st == null) continue;
       t.str += st; t.par += info.par; t.n++;
       if (!sc.dnf && +sc.sips === 1 && info.par >= 2) t.hio++;
@@ -532,6 +560,109 @@
     playSpin(i, opts.length, hole.id + '/' + key);
   }
 
+  // ------------------------------------------------------------ kaart
+  // De Leaflet-kaart leeft in één eigen element dat na elke render opnieuw in
+  // de pagina wordt gehangen, zodat zoom en positie bewaard blijven.
+  let map = null, mapEl = null, mapLayer = null, meMarker = null, mapSig = '', mapFitSig = '';
+  const mapPoints = () => holesList().map((h, i) => ({ h, i })).filter((x) => hasGeo(x.h));
+  function fitMap() {
+    const pts = mapPoints();
+    if (!map || !pts.length) return;
+    if (pts.length === 1) map.setView([+pts[0].h.lat, +pts[0].h.lng], 17);
+    else map.fitBounds(pts.map((x) => [+x.h.lat, +x.h.lng]), { padding: [30, 30] });
+  }
+  function syncMap() {
+    if (!map) return;
+    const L = window.L;
+    const pid = meP();
+    const cur = currentHoleId();
+    const pts = mapPoints();
+    const rows = pts.map((x) => {
+      const sc = scoreOf(pid, x.h.id);
+      return [x.h.id, x.i, +x.h.lat, +x.h.lng, x.h.name || '', x.h.addr || '', x.h.id === cur, !!(sc && sc.done), holeLine(x.h, pid)];
+    });
+    const sig = JSON.stringify(rows);
+    if (sig === mapSig) return;
+    mapSig = sig;
+    mapLayer.clearLayers();
+    if (pts.length > 1) {
+      L.polyline(rows.map((r) => [r[2], r[3]]), { color: '#0a1a13', weight: 4, opacity: 0.75, dashArray: '1 9', lineCap: 'round' }).addTo(mapLayer);
+    }
+    pts.forEach((x, k) => {
+      const r = rows[k];
+      const icon = L.divIcon({ className: 'pin-wrap', html: `<div class="pin ${r[6] ? 'cur' : ''} ${r[7] ? 'done' : ''}">${r[1] + 1}</div>`, iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -14] });
+      L.marker([r[2], r[3]], { icon, zIndexOffset: r[6] ? 1000 : 0 })
+        .bindPopup(`<b>${r[1] + 1}. ${esc(r[4])}</b>${r[5] ? '<br>' + esc(r[5]) : ''}<br>${r[8]}
+          <div class="pop-btns"><button class="btn" data-hole="${r[0]}">Bekijk</button><a class="btn ghost" href="${esc(navUrl(x.h))}" target="_blank" rel="noopener">Navigeer</a></div>`, { closeButton: false, minWidth: 200 })
+        .addTo(mapLayer);
+    });
+    const fitSig = JSON.stringify(rows.map((r) => [r[0], r[2], r[3]]));
+    if (fitSig !== mapFitSig) { mapFitSig = fitSig; fitMap(); }
+  }
+  function mountMap() {
+    const slot = $('#map-slot');
+    if (!slot) return;
+    const L = window.L;
+    if (!L) { slot.innerHTML = '<div class="empty">De kaart kon niet laden. De route hieronder werkt wel.</div>'; return; }
+    if (!mapEl) { mapEl = document.createElement('div'); mapEl.id = 'map'; }
+    slot.appendChild(mapEl);
+    if (!map) {
+      map = L.map(mapEl, { zoomControl: true });
+      map.setView([52.5126, 6.0936], 15);
+      map.attributionControl.setPrefix(false);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(map);
+      mapLayer = L.layerGroup().addTo(map);
+      map.on('popupopen', (e) => {
+        const btn = e.popup.getElement().querySelector('[data-hole]');
+        if (btn) btn.onclick = () => openHole(btn.dataset.hole);
+      });
+      mapSig = ''; mapFitSig = '';
+    } else {
+      map.invalidateSize(false);
+    }
+    syncMap();
+  }
+  /** Adres → coördinaten via OpenStreetMap (Nominatim). Geeft null als het niet lukt. */
+  async function geocode(addr) {
+    const c = city();
+    const q = addr + (c && !addr.toLowerCase().includes(c.toLowerCase()) ? ', ' + c : '');
+    try {
+      const res = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(q));
+      const j = res.ok ? await res.json() : null;
+      const hit = Array.isArray(j) ? j[0] : null;
+      if (hit && Number.isFinite(+hit.lat) && Number.isFinite(+hit.lon)) return { lat: +(+hit.lat).toFixed(6), lng: +(+hit.lon).toFixed(6) };
+    } catch (e) { /* geen bereik of geblokkeerd */ }
+    return null;
+  }
+  async function locateHole(id) {
+    const h = S.data.holes[id];
+    if (!h || !h.addr) return false;
+    const addr = h.addr;
+    const g = await geocode(addr);
+    const cur = S.data.holes[id];
+    if (!g || !cur || cur.addr !== addr) return false;
+    write('holes/' + id + '/lat', g.lat);
+    write('holes/' + id + '/lng', g.lng);
+    return true;
+  }
+  let geoBusy = false;
+  async function geoFill(quiet) {
+    if (geoBusy) return;
+    geoBusy = true;
+    let found = 0, miss = 0;
+    try {
+      for (const h of holesList()) {
+        if (hasGeo(h) || !h.addr) continue;
+        if (await locateHole(h.id)) found++; else miss++;
+        await new Promise((r) => setTimeout(r, 1100));   // Nominatim: hooguit één verzoek per seconde
+      }
+    } finally {
+      geoBusy = false;
+    }
+    if (!quiet) toast(miss ? `${found} gevonden, ${miss} niet gevonden` : found ? `${found} ${found === 1 ? 'kroeg' : 'kroegen'} op de kaart gezet` : 'Alles staat al op de kaart');
+    render(lastKey === 'tab:map');
+  }
+
   // ------------------------------------------------------------ views
   function statusInfo() {
     if (LOCAL) return { cls: 'local', txt: 'Lokaal' };
@@ -586,10 +717,14 @@
     return `<div class="center-screen">
       <div class="logo">⛳</div>
       <h1>Nieuw spel</h1>
-      <p class="mut">Er is nog geen spel. Maak het aan, daarna kan iedereen meedoen via de link.</p>
+      <p class="mut">Er is nog geen spel${GAME !== CFG_GAME ? ' met de naam “' + esc(GAME) + '”' : ''}. Maak het aan, daarna kan iedereen meedoen via de link.</p>
       <label class="field"><span>Naam van het spel</span>
         <input id="in-title" type="text" maxlength="40" value="Pubgolf Zwolle"></label>
-      ${LOCAL ? '' : `<label class="field"><span>Organisator-pincode (voor holes aanpassen)</span>
+      <div class="field"><span>Kroegen</span>
+        <div class="seg" id="c-route" data-v="${ui.route}">
+          <button data-act="seg" data-v="zwolle" class="${ui.route === 'empty' ? '' : 'on'}">Zwolle · ${ROUTE_ZWOLLE.length} kroegen</button>
+          <button data-act="seg" data-v="empty" class="${ui.route === 'empty' ? 'on' : ''}">Zelf invullen</button></div></div>
+      ${LOCAL ? '' : `<label class="field"><span>Organisator-pincode (voor kroegen aanpassen)</span>
         <input id="in-pin" type="text" inputmode="numeric" maxlength="8" placeholder="bijv. 1234" autocomplete="off"></label>`}
       <button class="btn big" data-act="create-game">Spel aanmaken</button>
       ${lc ? `<button class="btn ghost" data-act="create-from-local">Neem het lokale spel van dit toestel over (${Object.keys(lc.holes).length} holes)</button>` : ''}
@@ -626,7 +761,7 @@
     const list = holesList();
     const pid = meP();
     const cur = currentHoleId();
-    const nPlayers = playersList().length;
+    const players = playersList();
     let html = '';
     if (cur) {
       const h = holeById(cur);
@@ -636,19 +771,20 @@
         <span class="now-t">Hole ${holeNo(cur)} · ${esc(h.name || '')}</span><span class="now-go">›</span></button>`;
     }
     if (isOrg()) {
-      html += `<div class="rowbar"><button class="chip ${ui.editHoles ? 'on' : ''}" data-act="toggle-edit-holes">✏️ ${ui.editHoles ? 'Klaar met bewerken' : 'Holes bewerken'}</button></div>`;
+      html += `<div class="rowbar"><button class="chip ${ui.editHoles ? 'on' : ''}" data-act="toggle-edit-holes">✏️ ${ui.editHoles ? 'Klaar met bewerken' : 'Kroegen bewerken'}</button></div>`;
     }
-    if (!list.length) html += '<div class="empty">Nog geen holes. De organisator kan ze toevoegen.</div>';
+    if (!list.length) html += '<div class="empty">Nog geen kroegen. De organisator kan ze toevoegen.</div>';
     list.forEach((h, i) => {
       const info = holeInfo(h, pid);
       const sc = scoreOf(pid, h.id);
-      const st = strokesOf(sc, info.par);
-      const doneN = playersList().filter((p) => { const s = scoreOf(p.id, h.id); return s && s.done; }).length;
+      const st = strokesOf(sc, info.par, h);
+      const doneN = players.filter((p) => { const s = scoreOf(p.id, h.id); return s && s.done; }).length;
       html += `<div class="hole ${h.id === cur ? 'cur' : ''} ${st != null ? 'done' : ''}" data-act="open-hole" data-id="${h.id}" role="button" tabindex="0">
         <div class="hole-no">${i + 1}</div>
         <div class="hole-main"><div class="hole-name">${esc(h.name || 'Hole ' + (i + 1))}</div>
           <div class="hole-sub">${holeLine(h, pid)}</div>
-          <div class="hole-meta">${doneN}/${nPlayers} klaar</div></div>
+          ${h.task ? `<div class="hole-task">🎯 ${esc(h.task)}</div>` : ''}
+          <div class="hole-meta">${h.addr ? esc(h.addr) + ' · ' : ''}${doneN}/${players.length} klaar</div></div>
         ${ui.editHoles && isOrg()
           ? `<div class="hole-tools"><button class="mini" data-act="hole-move" data-id="${h.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Omhoog">▲</button>
              <button class="mini" data-act="hole-move" data-id="${h.id}" data-d="1" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Omlaag">▼</button>
@@ -658,7 +794,7 @@
             : '<div class="hole-go">›</div>'}
       </div>`;
     });
-    if (isOrg()) html += '<button class="btn ghost wide" data-act="hole-add">+ Hole toevoegen</button>';
+    if (isOrg()) html += '<button class="btn ghost wide" data-act="hole-add">+ Kroeg toevoegen</button>';
     return html;
   }
 
@@ -667,8 +803,10 @@
     const sips = clamp(+sc.sips || 0, 0, 99);
     const pens = Array.isArray(sc.pens) ? sc.pens.filter(Boolean) : [];
     const mine = pid === S.me;
-    const preview = sc.dnf || sips > 0 ? strokesOf(Object.assign({}, sc, { done: true }), info.par) : null;
-    const term = preview != null ? termFor(sc, preview, info.par) : null;
+    const preview = sc.dnf || sips > 0 ? strokesOf(Object.assign({}, sc, { done: true }), info.par, h) : null;
+    const term = preview != null ? termFor(sc, preview, info.par, h) : null;
+    const needTask = !!h.task && !sc.task;
+    const allPens = holePens(h).concat(penList());
     return `<section class="card score">
       <h3>${mine ? 'Jouw score' : 'Score van ' + esc(p.name)}</h3>
       <p class="mut small">Tel je teugen. In één keer leeg is een hole-in-one.</p>
@@ -679,24 +817,31 @@
       </div>
       <div class="quick">${[1, 2, 3, 4, 5, 6].map((n) => `<button class="chip ${!sc.dnf && sips === n ? 'on' : ''}" data-act="sip-set" data-n="${n}">${n === 1 ? '1× 🎯' : n}</button>`).join('')}</div>
       <button class="chip wide ${sc.dnf ? 'on bad' : ''}" data-act="dnf">🚫 Niet opgedronken (par + ${dnfExtra()})</button>
+      ${h.task ? `<h4>Opdracht</h4>
+        <p class="task-t">🎯 ${esc(h.task)}</p>
+        <div class="duo"><button class="chip ${sc.task === 'w' ? 'on good' : ''}" data-act="task" data-v="w">✅ Gelukt ${fmtMod(+h.win || 0)}</button>
+          <button class="chip ${sc.task === 'l' ? 'on bad' : ''}" data-act="task" data-v="l">❌ Mislukt ${fmtMod(+h.lose || 0)}</button></div>` : ''}
       <h4>Strafslagen</h4>
-      <div class="chips">${penList().map((pn, i) => `<button class="chip" data-act="pen-add" data-i="${i}">+${+pn.n || 1} ${esc(pn.l)}</button>`).join('')}
+      <div class="chips">${allPens.map((pn, i) => `<button class="chip ${i < holePens(h).length ? 'here' : ''}" data-act="pen-add" data-i="${i}">+${+pn.n || 1} ${esc(pn.l)}</button>`).join('')}
         <button class="chip" data-act="pen-add" data-i="-1">+1 Anders</button></div>
       ${pens.length ? `<div class="pens">${pens.map((pn, i) => `<span class="pen">+${+pn.n || 0} ${esc(pn.l)} <button data-act="pen-del" data-i="${i}" aria-label="Verwijder">✕</button></span>`).join('')}</div>` : ''}
-      <div class="result ${term ? term.cls : ''}">${term ? `<b>${esc(term.t)}</b><span>${preview} ${preview === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(preview - info.par)}</span>` : '<span>Nog geen teugen geteld</span>'}</div>
-      <button class="btn big" data-act="score-done" ${preview == null ? 'disabled' : ''}>${sc.done ? 'Klaar ✓' : 'Glas leeg — score opslaan ✓'}</button>
+      <div class="result ${term && !needTask ? term.cls : ''}">${term == null ? '<span>Nog geen teugen geteld</span>'
+        : needTask ? '<span>Kies nog of de opdracht gelukt is</span>'
+        : `<b>${esc(term.t)}</b><span>${preview} ${Math.abs(preview) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(preview - info.par)}</span>`}</div>
+      <button class="btn big" data-act="score-done" ${preview == null || needTask ? 'disabled' : ''}>${sc.done ? 'Klaar ✓' : 'Glas leeg — score opslaan ✓'}</button>
     </section>`;
   }
   function scoreSummary(h, pid, info, sc) {
     const p = S.data.players[pid];
-    const st = strokesOf(sc, info.par);
-    const term = termFor(sc, st, info.par);
+    const st = strokesOf(sc, info.par, h);
+    const term = termFor(sc, st, info.par, h);
     const pen = penTotal(sc);
+    const mod = taskMod(h, sc);
     return `<section class="card score saved ${term.cls}">
       <h3>${pid === S.me ? 'Jouw score' : 'Score van ' + esc(p.name)}</h3>
       <div class="saved-row"><div class="saved-n">${st}</div>
         <div class="saved-t"><b>${esc(term.t)}</b>
-          <span>${sc.dnf ? 'niet opgedronken' : (+sc.sips === 1 ? 'in 1 teug' : 'in ' + (+sc.sips || 1) + ' teugen')}${pen ? ' + ' + pen + ' straf' : ''} · par ${info.par}</span></div>
+          <span>${sc.dnf ? 'niet opgedronken' : (+sc.sips === 1 ? 'in 1 teug' : 'in ' + (+sc.sips || 1) + ' teugen')}${pen ? ' + ' + pen + ' straf' : ''}${h.task && sc.task ? ' · opdracht ' + (sc.task === 'w' ? 'gelukt ' : 'mislukt ') + fmtMod(mod) : ''} · par ${info.par}</span></div>
         <div class="rel big ${relCls(st - info.par)}">${fmtRel(st - info.par)}</div></div>
       <button class="btn ghost" data-act="score-edit">Aanpassen</button>
     </section>`;
@@ -709,6 +854,7 @@
     const sc = scoreOf(pid, h.id) || {};
     const players = playersList();
     const pinned = S.data.meta && S.data.meta.current === h.id;
+    const hp = holePens(h);
     let html = `<div class="subbar">
       <button class="icon" data-act="back" aria-label="Terug">‹ Holes</button>
       <span>Hole ${idx + 1} van ${list.length}</span>
@@ -718,7 +864,10 @@
     html += `<section class="hero">
       <div class="hero-no">${idx + 1}</div>
       <h2>${esc(h.name || 'Hole ' + (idx + 1))}</h2>
+      ${h.addr ? `<a class="addr" href="${esc(navUrl(h))}" target="_blank" rel="noopener">📍 ${esc(h.addr)} · <u>Navigeer</u></a>` : ''}
       <div class="hero-drink">${holeLine(h, pid)}</div>
+      ${h.task ? `<div class="hero-task"><b>🎯 Opdracht: ${esc(h.task)}</b><span>Gelukt ${fmtMod(+h.win || 0)} · Mislukt ${fmtMod(+h.lose || 0)}</span></div>` : ''}
+      ${hp.length ? `<div class="hero-pen">⚠️ Straf hier: ${hp.map((x) => esc(x.l) + ' +' + (+x.n || 1)).join(' · ')}</div>` : ''}
       ${h.note ? `<p class="hero-note">${esc(h.note)}</p>` : ''}
       ${pinned ? '<span class="badge">📍 Hier zijn we nu</span>' : ''}
       ${isOrg() ? `<div class="chips center">${pinned ? '' : '<button class="chip" data-act="hole-pin">📍 Maak dit de actieve hole</button>'}
@@ -765,12 +914,12 @@
     players.forEach((p) => {
       const pi = holeInfo(h, p.id);
       const ps = scoreOf(p.id, h.id);
-      const st = strokesOf(ps, pi.par);
+      const st = strokesOf(ps, pi.par, h);
       let right = '<span class="mut">—</span>', sub = '';
       if (st != null) {
-        const term = termFor(ps, st, pi.par);
+        const term = termFor(ps, st, pi.par, h);
         right = `<b>${st}</b><span class="rel ${relCls(st - pi.par)}">${fmtRel(st - pi.par)}</span>`;
-        sub = term.t + (h.type === 'wheel' ? ' · ' + pi.drink : '');
+        sub = term.t + (h.type === 'wheel' ? ' · ' + pi.drink : '') + (h.task && ps.task ? ' · opdracht ' + (ps.task === 'w' ? 'gelukt' : 'mislukt') : '');
       } else if (ps && (+ps.sips > 0 || ps.dnf)) {
         sub = 'bezig… ' + (+ps.sips || 0) + (+ps.sips === 1 ? ' teug' : ' teugen');
         right = '<span class="busy">🍺</span>';
@@ -781,6 +930,28 @@
         <span class="av">${esc(p.emoji || '🍺')}</span>
         <span class="pn"><b>${esc(p.name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
         <span class="pr">${right}</span></div>`;
+    });
+    html += '</div></section>';
+    return html;
+  }
+
+  function viewMap() {
+    const list = holesList();
+    const cur = currentHoleId();
+    const missing = list.filter((h) => h.addr && !hasGeo(h)).length;
+    let html = `<div id="map-slot" class="map-slot"></div>
+      <div class="btnrow"><button class="btn ghost" data-act="locate">📍 Waar ben ik?</button><button class="btn ghost" data-act="map-fit">Hele route</button></div>`;
+    if (missing) {
+      html += `<p class="mut small center">${missing === 1 ? 'Eén kroeg staat' : missing + ' kroegen staan'} nog niet op de kaart.
+        ${geoBusy ? 'Adressen opzoeken…' : '<button class="linkbtn" data-act="geo-all">Adressen opzoeken</button>'}</p>`;
+    }
+    html += '<section class="card"><h3>🗺️ Route in volgorde</h3><div class="route">';
+    if (!list.length) html += '<p class="mut">Nog geen kroegen.</p>';
+    list.forEach((h, i) => {
+      html += `<div class="rt ${h.id === cur ? 'cur' : ''}">
+        <button class="rt-main" data-act="open-hole" data-id="${h.id}"><span class="rt-no">${i + 1}</span>
+          <span class="pn"><b>${esc(h.name || 'Hole ' + (i + 1))}</b><small>${esc(h.addr || 'geen adres')}</small></span></button>
+        <a class="mini" href="${esc(navUrl(h))}" target="_blank" rel="noopener" aria-label="Navigeer naar ${esc(h.name || '')}">🧭</a></div>`;
     });
     html += '</div></section>';
     return html;
@@ -819,10 +990,10 @@
       holes.forEach((h) => {
         const info = holeInfo(h, r.p.id);
         const sc = scoreOf(r.p.id, h.id);
-        const st = strokesOf(sc, info.par);
+        const st = strokesOf(sc, info.par, h);
         if (st == null) { html += '<td class="nil">·</td>'; return; }
         const d = st - info.par;
-        const cls = sc.dnf ? 'dnf' : (+sc.sips === 1 && info.par >= 2 && !penTotal(sc)) ? 'hio' : d < 0 ? 'under' : d > 0 ? 'over' : 'even';
+        const cls = sc.dnf ? 'dnf' : termFor(sc, st, info.par, h).cls === 'hio' ? 'hio' : d < 0 ? 'under' : d > 0 ? 'over' : 'even';
         html += `<td><span class="cell ${cls}">${st}</span></td>`;
       });
       html += `<td class="tot">${r.n ? r.str : '·'}</td><td class="tot rel ${r.n ? relCls(r.rel) : ''}">${r.n ? fmtRel(r.rel) : '·'}</td></tr>`;
@@ -868,6 +1039,7 @@
         <li>Elke kroeg is een hole met een drankje en een <b>par</b>: het aantal teugen waarin je het glas leeg hoort te hebben.</li>
         <li>Tel je <b>teugen</b>. In één keer achterover is een <b>hole-in-one</b>.</li>
         <li>Staat er een <b>rad</b> bij de hole, dan bepaalt het rad je drankje en je par.</li>
+        <li>Bij sommige kroegen hoort een <b>opdracht</b>, zoals Split the G: gelukt gaat van je score af, mislukt komt erbij.</li>
         <li>Glas niet leeg? Dan krijg je par + ${dnfExtra()}.</li>
         ${penList().length ? `<li>Strafslagen: ${penList().map((p) => esc(p.l) + ' +' + (+p.n || 1)).join(', ')}.</li>` : ''}
         <li>Laagste totaalscore wint. Fris of 0.0 telt net zo goed.</li>
@@ -882,9 +1054,11 @@
     html += '</section>';
     html += '<section class="card"><h3>🛠️ Organisator</h3>';
     if (isOrg()) {
-      html += `<p class="mut small">Je kunt holes aanpassen (tabblad Holes), scores van iedereen invullen en de actieve hole kiezen.</p>
+      html += `<p class="mut small">Je kunt kroegen aanpassen (tabblad Holes), scores van iedereen invullen en de actieve hole kiezen.</p>
         <div class="stack">
           <button class="btn ghost" data-act="settings">Spelinstellingen en strafslagen</button>
+          <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
+          <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
           <button class="btn ghost" data-act="players">Spelers beheren</button>
           <button class="btn ghost" data-act="unpin">Actieve hole loslaten</button>
@@ -892,7 +1066,7 @@
           ${LOCAL ? '' : '<button class="btn ghost" data-act="org-off">Organisator-modus uit</button>'}
         </div>`;
     } else {
-      html += '<p class="mut small">Met de pincode kun je holes aanpassen en scores van anderen invullen.</p><button class="btn ghost" data-act="org-on">Ontgrendel met pincode</button>';
+      html += '<p class="mut small">Met de pincode kun je kroegen aanpassen en scores van anderen invullen.</p><button class="btn ghost" data-act="org-on">Ontgrendel met pincode</button>';
     }
     html += '</section>';
     const st = statusInfo();
@@ -907,9 +1081,10 @@
     const hole = ui.hole ? holeById(ui.hole) : null;
     if (ui.hole && !hole) ui.hole = null;
     const st = statusInfo();
-    const tabs = [['holes', '⛳', 'Holes'], ['board', '🏆', 'Stand'], ['card', '📋', 'Kaart'], ['more', '☰', 'Meer']];
+    const tabs = [['holes', '⛳', 'Holes'], ['map', '🗺️', 'Kaart'], ['board', '🏆', 'Stand'], ['card', '📋', 'Scores'], ['more', '☰', 'Meer']];
     let body;
     if (hole) body = viewHole(hole);
+    else if (ui.tab === 'map') body = viewMap();
     else if (ui.tab === 'board') body = viewBoard();
     else if (ui.tab === 'card') body = viewCard();
     else if (ui.tab === 'more') body = viewMore();
@@ -936,12 +1111,18 @@
     if (typing && !force) { dirty = true; return; }
     dirty = false;
 
-    let html, key;
-    if (!DB) { html = viewSetup(); key = 'setup'; }
-    else if (!S.loaded && !S.data.meta) { html = viewLoading(); key = 'loading'; }
-    else if (!S.data.meta) { html = viewCreate(); key = 'create'; }
-    else if (!meP() && !S.spectator) { html = viewJoin(); key = 'join'; }
-    else { html = viewMain(); key = ui.hole ? 'hole:' + ui.hole : 'tab:' + ui.tab; }
+    let key;
+    if (!DB) key = 'setup';
+    else if (!S.loaded && !S.data.meta) key = 'loading';
+    else if (!S.data.meta) key = 'create';
+    else if (!meP() && !S.spectator) key = 'join';
+    else {
+      if (ui.hole && !S.data.holes[ui.hole]) ui.hole = null;
+      key = ui.hole ? 'hole:' + ui.hole : 'tab:' + ui.tab;
+    }
+    // Op het kaart-tabblad alleen de punten bijwerken, zodat de kaart niet verspringt terwijl je sleept.
+    if (!force && key === 'tab:map' && lastKey === key && map && mapEl && mapEl.isConnected) { syncMap(); paintStatus(); return; }
+    const html = key === 'setup' ? viewSetup() : key === 'loading' ? viewLoading() : key === 'create' ? viewCreate() : key === 'join' ? viewJoin() : viewMain();
 
     const keep = {};
     app.querySelectorAll('input[id],textarea[id]').forEach((el) => { keep[el.id] = el.value; });
@@ -950,6 +1131,7 @@
     app.innerHTML = html;
     for (const id in keep) { const el = document.getElementById(id); if (el) el.value = keep[id]; }
     if (focusId) { const el = document.getElementById(focusId); if (el) el.focus({ preventScroll: true }); }
+    if (key === 'tab:map') mountMap();
     if (key !== lastKey) {
       window.scrollTo(0, key.startsWith('tab:') ? ui.scroll[key] || 0 : 0);
       lastKey = key;
@@ -995,10 +1177,12 @@
 
   function sheetHole(id) {
     const h = id ? holeById(id) : null;
-    const d = h || { name: '', type: 'fixed', drink: '', par: 3, wheelMode: 'player', options: DEFAULT_WHEEL, note: '' };
+    const d = h || { name: '', addr: '', type: 'fixed', drink: '', par: 3, wheelMode: 'player', options: DEFAULT_WHEEL, note: '' };
     const opts = (Array.isArray(d.options) && d.options.length ? d.options : DEFAULT_WHEEL).filter(Boolean);
-    openSheet(`<h2>${h ? 'Hole bewerken' : 'Nieuwe hole'}</h2>
+    openSheet(`<h2>${h ? 'Kroeg bewerken' : 'Nieuwe kroeg'}</h2>
       <label class="field"><span>Kroeg</span><input id="h-name" type="text" maxlength="40" value="${esc(d.name)}" placeholder="Naam van de kroeg"></label>
+      <label class="field"><span>Adres (voor de kaart)</span><input id="h-addr" type="text" maxlength="80" value="${esc(d.addr || '')}" placeholder="bijv. Melkmarkt 37"></label>
+      <h4>Drankje</h4>
       <div class="seg" id="h-type" data-v="${d.type === 'wheel' ? 'wheel' : 'fixed'}">
         <button data-act="seg" data-v="fixed" class="${d.type === 'wheel' ? '' : 'on'}">🍺 Vast drankje</button>
         <button data-act="seg" data-v="wheel" class="${d.type === 'wheel' ? 'on' : ''}">🎡 Rad</button></div>
@@ -1013,10 +1197,19 @@
         <label class="field"><span>Drankjes op het rad — één per regel, met de par achter een komma</span>
           <textarea id="h-opts" rows="6" spellcheck="false">${esc(opts.map((o) => o.label + ', ' + (+o.par || 1)).join('\n'))}</textarea></label>
       </div>
-      <label class="field"><span>Opmerking of extra regel (optioneel)</span><input id="h-note" type="text" maxlength="120" value="${esc(d.note || '')}" placeholder="bijv. Waterhazard: niet naar de wc"></label>
+      <h4>Opdracht (optioneel)</h4>
+      <label class="field"><span>Wat moet je doen?</span><input id="h-task" type="text" maxlength="60" value="${esc(d.task || '')}" placeholder="bijv. Split the G"></label>
+      <div class="two">
+        <label class="field"><span>Gelukt: slagen eraf</span><input id="h-win" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.win || 0 : 2)}"></label>
+        <label class="field"><span>Mislukt: slagen erbij</span><input id="h-lose" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.lose || 0 : 2)}"></label>
+      </div>
+      <h4>Straffen bij deze kroeg (optioneel)</h4>
+      <label class="field"><span>Eén per regel, met het aantal slagen achter een komma</span>
+        <textarea id="h-hp" rows="2" spellcheck="false" placeholder="bijv. Naar de wc, 2">${esc(holePens(d).map((x) => x.l + ', ' + (+x.n || 1)).join('\n'))}</textarea></label>
+      <label class="field"><span>Opmerking (optioneel)</span><input id="h-note" type="text" maxlength="120" value="${esc(d.note || '')}" placeholder="bijv. Verzamelen op het terras"></label>
       <p id="h-msg" class="msg"></p>
       <button class="btn big" data-act="hole-save" data-id="${h ? h.id : ''}">Opslaan</button>
-      ${h ? `<button class="btn ghost danger" data-act="hole-del" data-id="${h.id}">Hole verwijderen</button>` : ''}
+      ${h ? `<button class="btn ghost danger" data-act="hole-del" data-id="${h.id}">Kroeg verwijderen</button>` : ''}
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
     syncSeg();
   }
@@ -1029,6 +1222,7 @@
     const m = S.data.meta || {};
     openSheet(`<h2>Spelinstellingen</h2>
       <label class="field"><span>Naam van het spel</span><input id="s-title" type="text" maxlength="40" value="${esc(m.title || '')}"></label>
+      <label class="field"><span>Stad (voor de kaart en navigatie)</span><input id="s-city" type="text" maxlength="40" value="${esc(m.city || '')}" placeholder="bijv. Zwolle"></label>
       <label class="field"><span>Extra slagen bij "niet opgedronken" (bovenop par)</span><input id="s-dnf" type="number" inputmode="numeric" min="0" max="20" value="${dnfExtra()}"></label>
       <label class="field"><span>Strafslagen — één per regel, met het aantal achter een komma</span>
         <textarea id="s-pens" rows="5" spellcheck="false">${esc(penList().map((p) => p.l + ', ' + (+p.n || 1)).join('\n'))}</textarea></label>
@@ -1070,6 +1264,16 @@
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
     setTimeout(() => { const el = $('#o-pin'); if (el) el.focus(); }, 50);
   }
+  function sheetNewGame() {
+    openSheet(`<h2>Nieuw spel</h2>
+      <p class="mut small">Elk spel heeft z'n eigen kroegen, spelers en scores, en een eigen link. Het huidige spel blijft bestaan.</p>
+      <label class="field"><span>Korte naam voor in de link (letters, cijfers, streepjes)</span>
+        <input id="n-game" type="text" maxlength="30" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bijv. zwolle-december"></label>
+      <p id="n-msg" class="msg"></p>
+      <button class="btn big" data-act="new-game-go">Open nieuw spel</button>
+      <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
+    setTimeout(() => { const el = $('#n-game'); if (el) el.focus(); }, 50);
+  }
   function sheetPen() {
     openSheet(`<h2>Strafslag</h2>
       <label class="field"><span>Waarvoor?</span><input id="x-l" type="text" maxlength="30" placeholder="bijv. Te hard gelachen"></label>
@@ -1105,11 +1309,13 @@
     const next = Object.assign({ sips: 0, done: false }, scoreOf(pid, h.id) || {}, patch, { t: now(), par: info.par, drink: info.drink || '' });
     if (!next.pens || !next.pens.length) delete next.pens;
     if (!next.dnf) delete next.dnf;
+    if (!next.task || !h.task) delete next.task;
     write('scores/' + pid + '/' + h.id, next);
   }
   function openHole(id) {
     if (!S.data.holes[id]) return;
     ui.hole = id; ui.editing = false;
+    if (map) map.closePopup();
     history.pushState({ hole: id }, '');
     render(true);
   }
@@ -1148,12 +1354,14 @@
       const t = val('in-title') || 'Pubgolf';
       const pin = val('in-pin');
       if (!LOCAL && pin.length < 3) { msg('create-msg', 'Kies een pincode van minstens 3 tekens.'); return; }
-      const holes = {};
-      DEFAULT_HOLES.forEach((h, i) => { holes['h' + uid(6)] = Object.assign({ order: i + 1 }, clone(h)); });
-      write('meta', { title: t.slice(0, 40), pin: pin ? hashStr('pg:' + pin) : '', dnf: 3, pens: DEFAULT_PENS, created: now() });
-      write('holes', holes);
+      const zwolle = ui.route !== 'empty';
+      const meta = { title: t.slice(0, 40), pin: pin ? hashStr('pg:' + pin) : '', dnf: 3, pens: DEFAULT_PENS, created: now() };
+      if (zwolle) meta.city = ROUTE_CITY;
+      write('meta', meta);
+      if (zwolle) write('holes', seedHoles(ROUTE_ZWOLLE));
       setOrg(true);
       render(true);
+      if (zwolle) geoFill(true);
     },
     'create-from-local'() {
       const lc = localCopy();
@@ -1222,10 +1430,11 @@
     },
     'sip-set'(el) { buzz(12); putScore({ sips: +el.dataset.n, dnf: false }); },
     'dnf'() { const sc = scoreOf(targetPid(), ui.hole) || {}; putScore({ dnf: !sc.dnf }); },
+    'task'(el) { putScore({ task: el.dataset.v === 'w' ? 'w' : 'l' }); },
     'pen-add'(el) {
       const i = +el.dataset.i;
       if (i < 0) { sheetPen(); return; }
-      const pn = penList()[i];
+      const pn = holePens(holeById(ui.hole)).concat(penList())[i];
       if (!pn) return;
       const sc = scoreOf(targetPid(), ui.hole) || {};
       putScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: pn.l, n: +pn.n || 1 }]) });
@@ -1248,13 +1457,14 @@
       const h = holeById(ui.hole);
       const sc = scoreOf(pid, ui.hole) || {};
       if (!h || !(sc.dnf || +sc.sips > 0)) return;
+      if (h.task && !sc.task) { toast('Kies eerst of de opdracht gelukt is.'); return; }
       const first = !sc.done;
       ui.editing = false;
       putScore({ done: true });
       if (first) {
         const info = holeInfo(h, pid);
         const saved = scoreOf(pid, h.id);
-        const term = termFor(saved, strokesOf(saved, info.par), info.par);
+        const term = termFor(saved, strokesOf(saved, info.par, h), info.par, h);
         buzz(term.cls === 'hio' ? [60, 40, 60, 40, 160] : 30);
         if (term.cls === 'hio') confetti(['🎯', '⛳', '🏆', '✨']); else if (term.cls === 'good') confetti();
         toast(term.t + ' genoteerd', term.cls === 'hio' ? 'gold' : '');
@@ -1279,13 +1489,14 @@
       const seg = el.parentNode;
       seg.dataset.v = el.dataset.v;
       seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
+      if (seg.id === 'c-route') ui.route = el.dataset.v;
       syncSeg();
     },
     'hole-save'(el) {
       const id = el.dataset.id || 'h' + uid(6);
       const prev = S.data.holes[id] || {};
       const type = $('#h-type').dataset.v === 'wheel' ? 'wheel' : 'fixed';
-      const doc = { name: val('h-name').slice(0, 40) || 'Kroeg', type, order: +prev.order || holesList().length + 1 };
+      const doc = { name: val('h-name').slice(0, 40) || 'Kroeg', type, order: +prev.order || Math.max(0, ...holesList().map((x) => +x.order || 0)) + 1 };
       if (type === 'wheel') {
         doc.wheelMode = $('#h-mode').dataset.v === 'group' ? 'group' : 'player';
         doc.options = parseOptions(val('h-opts'));
@@ -1294,11 +1505,25 @@
         doc.drink = val('h-drink').slice(0, 30) || 'Drankje';
         doc.par = clamp(Math.round(+val('h-par')) || 1, 1, 20);
       }
+      const addr = val('h-addr').slice(0, 80);
+      if (addr) {
+        doc.addr = addr;
+        if (addr === prev.addr && hasGeo(prev)) { doc.lat = +prev.lat; doc.lng = +prev.lng; }
+      }
+      const task = val('h-task').slice(0, 60);
+      if (task) {
+        doc.task = task;
+        doc.win = -clamp(Math.abs(Math.round(+val('h-win')) || 0), 0, 20) || 0;
+        doc.lose = clamp(Math.abs(Math.round(+val('h-lose')) || 0), 0, 20);
+      }
+      const hp = parsePens(val('h-hp'));
+      if (hp.length) doc.hp = hp;
       const note = val('h-note').slice(0, 120);
       if (note) doc.note = note;
       write('holes/' + id, doc);
       closeSheet();
-      toast('Hole opgeslagen');
+      toast('Kroeg opgeslagen');
+      if (addr && !hasGeo(doc)) locateHole(id).then((ok) => { if (!ok) toast('Adres niet gevonden voor de kaart.'); });
     },
     'hole-del'(el) {
       const id = el.dataset.id;
@@ -1318,6 +1543,8 @@
       const pens = parsePens(val('s-pens'));
       const pin = val('s-pin');
       if (t !== m.title) write('meta/title', t);
+      const c = val('s-city').slice(0, 40);
+      if (c !== (m.city || '')) write('meta/city', c || null);
       if (dnf !== dnfExtra()) write('meta/dnf', dnf);
       if (JSON.stringify(pens) !== JSON.stringify(penList())) write('meta/pens', pens.length ? pens : null);
       if (pin) write('meta/pin', hashStr('pg:' + pin));
@@ -1364,6 +1591,39 @@
       ui.wheelRot = {};
       toast('Alle scores zijn gewist.');
     },
+    'route-load'() {
+      if (!confirm('De ' + ROUTE_ZWOLLE.length + ' kroegen van Pubgolf Zwolle laden? Dit vervangt alle kroegen en wist alle scores.')) return;
+      write('scores', null);
+      write('spins', null);
+      write('meta/current', null);
+      write('meta/city', ROUTE_CITY);
+      write('holes', seedHoles(ROUTE_ZWOLLE));
+      ui.wheelRot = {};
+      toast('Route Zwolle geladen');
+      geoFill(true);
+    },
+    'new-game'() { sheetNewGame(); },
+    'new-game-go'() {
+      const g = cleanGame(val('n-game').replace(/\s+/g, '-'));
+      if (g.length < 2) { msg('n-msg', 'Kies een naam van minstens 2 tekens.'); return; }
+      if (g === GAME) { msg('n-msg', 'Dat is het spel waar je nu in zit.'); return; }
+      const p = [];
+      if (LOCAL) p.push('db=local'); else if (DB !== CFG_DB) p.push('db=' + encodeURIComponent(DB));
+      p.push('g=' + g);
+      goTo(location.origin + location.pathname + '#' + p.join('&'));
+    },
+    'locate'() {
+      if (!map || !navigator.geolocation) { toast('Locatie is hier niet beschikbaar.'); return; }
+      toast('Locatie zoeken…');
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const ll = [pos.coords.latitude, pos.coords.longitude];
+        if (!meMarker) meMarker = window.L.circleMarker(ll, { radius: 9, color: '#fff', weight: 3, fillColor: '#2f7bff', fillOpacity: 1 }).addTo(map);
+        else meMarker.setLatLng(ll);
+        map.setView(ll, Math.max(map.getZoom(), 17));
+      }, () => toast('Geen toegang tot je locatie.'), { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 });
+    },
+    'map-fit'() { fitMap(); },
+    'geo-all'() { if (!geoBusy) { geoFill(false); render(true); } },
     'org-on'() { sheetPin(); },
     'org-check'() {
       const pin = val('o-pin');
@@ -1399,8 +1659,8 @@
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' || ev.target.tagName !== 'INPUT') return;
-    const map = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save' };
-    const act = map[ev.target.id];
+    const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'n-game': 'new-game-go' };
+    const act = enter[ev.target.id];
     if (act) { ev.preventDefault(); const btn = $(`[data-act="${act}"]`); if (btn) btn.click(); }
   });
   window.addEventListener('popstate', (ev) => {

@@ -2,11 +2,15 @@
 
 Scorekaart-webapp voor een pubgolf: iedereen opent de link op z'n eigen telefoon, vult een naam in en telt per hole z'n teugen. De stand werkt live bij.
 
-- **Holes** met een vast drankje en par, of een **rad** dat je drankje en par bepaalt (ieder draait zelf, of één draai voor de groep).
+- **Kroegen per spel instelbaar**: naam, adres, een vast drankje met par of een **rad** dat je drankje en par bepaalt (ieder draait zelf, of één draai voor de groep).
+- **Opdracht per kroeg**, zoals Split the G bij The Dublin House: gelukt gaat van je score af, mislukt komt erbij. Per kroeg kun je ook eigen **straffen** instellen.
 - **Teugen tellen** met een grote +1-knop; in één keer leeg is een hole-in-one. Strafslagen en "niet opgedronken" tellen mee.
+- **Kaart** met de route in volgorde, genummerde punten, je eigen locatie en een navigatieknop per kroeg.
 - **Live stand en scorekaart**, met meldingen als iemand een hole afrondt.
-- **Organisator-modus** (pincode): holes aanpassen, de actieve hole kiezen, spelers zonder telefoon toevoegen en scores van anderen invullen.
+- **Organisator-modus** (pincode): kroegen aanpassen, de actieve hole kiezen, spelers zonder telefoon toevoegen en scores van anderen invullen.
 - Werkt ook met slecht bereik: scores worden op de telefoon bewaard en verstuurd zodra er weer verbinding is.
+
+De standaardroute is Pubgolf Zwolle met 14 kroegen. Bij het aanmaken van een spel kies je die route of begin je leeg.
 
 Er is geen build-stap. Het is één statische pagina (`index.html`, `app.js`, `style.css`).
 
@@ -31,11 +35,15 @@ Zet de bestanden op een statische host. Met GitHub Pages: **Settings → Pages �
 ## Op de avond zelf
 
 1. De organisator opent de site, maakt het spel aan en kiest een pincode.
-2. Op het tabblad **Holes** tik je op **Holes bewerken** om de kroegen, drankjes, par en raden in te vullen.
+2. Op het tabblad **Holes** tik je op **Kroegen bewerken** om per kroeg het drankje, de par, een rad, een opdracht of straffen in te stellen.
 3. Deel de link of QR-code via **Meer → Nodig iedereen uit**.
 4. Bij elke kroeg: open de hole, draai eventueel aan het rad, tel je teugen en tik op **Glas leeg**.
 
-Een nieuwe avond met een schone lei? Verander `game` in `config.js`, of gebruik **Meer → Alle scores wissen**.
+Een nieuwe avond met een schone lei? Gebruik **Meer → Alle scores wissen**, of start via **Meer → Nieuw spel met eigen kroegen** een spel met een eigen link, eigen kroegen en eigen scores.
+
+## Kaart
+
+De kaart gebruikt kaarttegels van OpenStreetMap. Adressen worden in de browser omgezet naar een punt op de kaart via de zoekdienst van OpenStreetMap (Nominatim); daarbij wordt alleen het adres van de kroeg verstuurd. Vul bij **Spelinstellingen** de stad in, dan vindt de app adressen zonder plaatsnaam.
 
 ## Zonder database
 
@@ -50,4 +58,4 @@ node tools/dev-server.js
 
 De dev-server serveert de app en een nagemaakte Firebase-database, zodat je live sync met meerdere tabbladen kunt testen. `tools/e2e.js` speelt een hele avond na met meerdere telefoons (vereist het npm-pakket `playwright`).
 
-De QR-code komt uit [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT), opgenomen in `vendor/`.
+In `vendor/` staan [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT) voor de QR-code en [Leaflet](https://leafletjs.com) (BSD-2-Clause) voor de kaart.

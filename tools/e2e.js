@@ -11,7 +11,7 @@ const URL_ = `${BASE}/?db=${BASE}/db&g=${G}`;
 const SHOTS = process.env.SHOTS || '';
 if (SHOTS) require('fs').mkdirSync(SHOTS, { recursive: true });
 const shot = (page, name, fullPage) => (SHOTS ? page.screenshot({ path: SHOTS + '/' + name + '.png', fullPage: !!fullPage }) : null);
-let fails = 0;
+let fails = 0, geoCalls = 0;
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const fits = async (page, label) => { const r = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]); ok(r[0] <= r[1], 'geen horizontale overflow: ' + label + ' (' + r.join('/') + ')'); };
@@ -20,6 +20,13 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   const browser = await chromium.launch();
   const mk = async (name) => {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true, isMobile: true });
+    await ctx.route('https://tile.openstreetmap.org/**', (r) => r.abort());
+    await ctx.route('https://nominatim.openstreetmap.org/**', (r) => {
+      geoCalls++;
+      const q = new URL(r.request().url()).searchParams.get('q') || '';
+      if (/Onbestaand/.test(q)) return r.fulfill({ json: [] });
+      return r.fulfill({ json: [{ lat: String(52.5100 + (geoCalls % 7) * 0.0006), lon: String(6.0900 + (geoCalls % 5) * 0.0011), display_name: q }] });
+    });
     const page = await ctx.newPage();
     page.on('console', m => { if (m.type() === 'error') { console.log(`[${name}] console.error:`, m.text()); } });
     page.on('pageerror', e => { console.log(`[${name}] PAGEERROR:`, e.message); fails++; });
@@ -42,7 +49,9 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   ok(await a.inputValue('#in-name') === 'Sander', 'naam blijft staan na emoji-keuze');
   await a.click('[data-act="join"]');
   await a.waitForSelector('.hole');
-  ok(await a.locator('.hole').count() === 9, 'A ziet 9 holes');
+  ok(await a.locator('.hole').count() === 14, 'A ziet de 14 kroegen van Zwolle');
+  ok((await a.textContent('.hole >> nth=0')).includes('Beugeltje') && (await a.textContent('.hole >> nth=13')).includes('Vliegende Paard'), 'kroegen staan in de opgegeven volgorde');
+  ok((await a.textContent('.hole >> nth=7')).includes('Guinness') && (await a.textContent('.hole >> nth=7')).includes('Split the G'), 'Dublin House: Guinness met Split the G');
   await shot(a, '03-holes');
 
   // 2. B doet mee
@@ -52,7 +61,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await b.fill('#in-name', 'Piet');
   await b.click('[data-act="join"]');
   await b.waitForSelector('.hole');
-  ok(await b.locator('.hole').count() === 9, 'B ziet 9 holes');
+  ok(await b.locator('.hole').count() === 14, 'B ziet 14 kroegen');
 
   // 3. A scoort hole-in-one op hole 1
   await a.click('.hole >> nth=0');
@@ -66,12 +75,21 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
 
   // 4. B ziet het live
   await b.click('[data-act="tab"][data-tab="board"]');
-  await b.waitForFunction(() => document.querySelector('.brow') && document.querySelector('.board').textContent.includes('−1'), null, { timeout: 5000 }).then(() => ok(true, 'B ziet score van A live (−1)')).catch(() => ok(false, 'B ziet score van A live (−1)'));
+  await b.waitForFunction(() => document.querySelector('.brow') && document.querySelector('.board').textContent.includes('−2'), null, { timeout: 5000 }).then(() => ok(true, 'B ziet score van A live (−2)')).catch(() => ok(false, 'B ziet score van A live (−2)'));
   ok(await b.locator('.toast').count() >= 1, 'B krijgt een melding');
   await shot(b, '06-board');
 
-  // 5. B draait het rad op hole 3
+  // 5. organisator maakt van hole 3 een rad; B draait
+  await a.click('[data-act="tab"][data-tab="holes"]');
+  await a.click('[data-act="toggle-edit-holes"]');
+  await a.click('[data-act="hole-edit"] >> nth=2');
+  await a.waitForSelector('#h-type');
+  await a.click('#h-type [data-v="wheel"]');
+  await a.click('[data-act="hole-save"]');
+  await sleep(500);
+  await a.click('[data-act="toggle-edit-holes"]');
   await b.click('[data-act="tab"][data-tab="holes"]');
+  await b.waitForFunction(() => { const h = document.querySelectorAll('.hole')[2]; return h && h.textContent.includes('Rad'); }, null, { timeout: 5000 });
   await b.click('.hole >> nth=2');
   await b.waitForSelector('.wheel');
   await shot(b, '07-wheel');
@@ -112,6 +130,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.waitForSelector('#h-name');
   await a.fill('#h-name', 'Café Test');
   await a.fill('#h-par', '4');
+  await a.fill('#h-hp', 'Naar de wc, 2');
   await shot(a, '13-sheet-hole');
   await a.click('[data-act="hole-save"]');
   await sleep(600);
@@ -192,7 +211,8 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('.hole >> nth=5');
   await a.waitForSelector('.hero');
   await a.click('.hero [data-act="hole-edit"]');
-  await a.waitForSelector('#h-mode');
+  await a.waitForSelector('#h-type');
+  await a.click('#h-type [data-v="wheel"]');
   await a.click('#h-mode [data-v="group"]');
   await a.click('[data-act="hole-save"]');
   await sleep(500);
@@ -272,8 +292,104 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await E.page.waitForSelector('.tabs');
   await sleep(800);
   const remote = await (await fetch(`${BASE}/db/games/${G2}.json`)).json();
-  ok(remote && remote.meta.title === 'Lokaal Feest' && Object.keys(remote.holes).length === 9 && Object.keys(remote.players).length === 1 && !!remote.scores, 'lokaal spel staat in de database');
+  ok(remote && remote.meta.title === 'Lokaal Feest' && Object.keys(remote.holes).length === 14 && Object.keys(remote.players).length === 1 && !!remote.scores, 'lokaal spel staat in de database');
   ok((await E.page.textContent('.status')).includes('Live'), 'na overzetten Live en ingelogd');
+
+  // 17. opdracht bij The Dublin House (hole 8): Split the G
+  await b.click('[data-act="tab"][data-tab="holes"]');
+  await b.click('.hole >> nth=7');
+  await b.waitForSelector('.hero-task');
+  ok((await b.textContent('.hero')).includes('Split the G') && (await b.textContent('.hero-task')).includes('−2'), 'hole toont opdracht met −2 / +2');
+  ok((await b.getAttribute('.hero .addr', 'href')).includes('google.com/maps/dir'), 'navigatielink naar het adres');
+  await b.click('[data-act="sip-set"][data-n="3"]');
+  await sleep(150);
+  ok(await b.isDisabled('[data-act="score-done"]'), 'opslaan kan pas na keuze gelukt/mislukt');
+  await b.click('[data-act="task"][data-v="w"]');
+  await sleep(150);
+  await shot(b, '21-opdracht', true);
+  await b.click('[data-act="score-done"]');
+  await b.waitForSelector('.saved');
+  ok((await b.textContent('.saved-n')).trim() === '1', 'Split the G gelukt: 3 teugen − 2 = 1');
+  ok((await b.textContent('.saved')).includes('opdracht gelukt'), 'samenvatting noemt de opdracht');
+  await b.click('[data-act="score-edit"]');
+  await b.click('[data-act="task"][data-v="l"]');
+  await b.click('[data-act="score-done"]');
+  await b.waitForSelector('.saved');
+  ok((await b.textContent('.saved-n')).trim() === '5', 'Split the G mislukt: 3 teugen + 2 = 5');
+  await a.click('[data-act="tab"][data-tab="card"]');
+  await a.waitForFunction(() => { const r = [...document.querySelectorAll('table.sc tbody tr')].find(x => x.textContent.includes('Piet')); return r && r.children[8].textContent.trim() === '5'; }, null, { timeout: 5000 }).then(() => ok(true, 'A ziet de opdracht-score op de scorekaart')).catch(() => ok(false, 'A ziet de opdracht-score op de scorekaart'));
+
+  // 18. straf per kroeg (hole 2)
+  await b.click('[data-act="tab"][data-tab="holes"]');
+  await b.click('.hole >> nth=1');
+  await b.waitForSelector('.counter');
+  ok((await b.textContent('.hero-pen')).includes('Naar de wc'), 'hole toont de straf van deze kroeg');
+  await b.click('[data-act="sip-set"][data-n="4"]');
+  await b.click('.chip.here');
+  await b.click('[data-act="score-done"]');
+  await b.waitForSelector('.saved');
+  ok((await b.textContent('.saved-n')).trim() === '6', 'straf van de kroeg telt mee: 4 + 2 = 6');
+
+  // 19. kaart met de route
+  await a.click('[data-act="tab"][data-tab="map"]');
+  await a.waitForSelector('#map.leaflet-container');
+  await a.waitForFunction(() => document.querySelectorAll('#map .pin').length === 14, null, { timeout: 30000 }).then(() => ok(true, 'kaart toont 14 genummerde punten')).catch(async () => ok(false, 'kaart toont 14 punten (nu ' + await a.locator('#map .pin').count() + ')'));
+  ok(await a.locator('.rt').count() === 14, 'routelijst met 14 kroegen in volgorde');
+  ok((await a.textContent('.rt >> nth=7')).includes('Dublin House'), 'Dublin House is nummer 8 op de route');
+  await fits(a, 'kaart');
+  await sleep(400);
+  await shot(a, '22-kaart');
+  await b.click('[data-act="tab"][data-tab="map"]');
+  await b.waitForFunction(() => document.querySelectorAll('#map .pin').length === 14, null, { timeout: 8000 }).then(() => ok(true, 'B ziet dezelfde punten zonder zelf adressen op te zoeken')).catch(() => ok(false, 'B ziet dezelfde punten'));
+  ok(await b.locator('#map .pin.done').count() >= 3, 'gespeelde holes zijn groen op de kaart van B');
+  const pin8 = b.locator('#map .pin', { hasText: /^8$/ });
+  await pin8.click({ force: true });
+  await b.waitForSelector('.leaflet-popup [data-hole]');
+  await shot(b, '23-kaart-popup');
+  await b.click('.leaflet-popup [data-hole]');
+  await b.waitForSelector('.hero');
+  ok((await b.textContent('.hero h2')).includes('Dublin House'), 'punt op de kaart opent de juiste hole');
+  await b.goBack();
+  await b.waitForSelector('#map .pin');
+  ok(await b.locator('#map .pin').count() === 14, 'kaart staat er nog na terugkeren');
+
+  // 20. adres wijzigen zoekt het punt opnieuw op; onbekend adres blijft van de kaart
+  await a.click('[data-act="tab"][data-tab="holes"]');
+  await a.click('[data-act="toggle-edit-holes"]');
+  await a.click('[data-act="hole-edit"] >> nth=0');
+  await a.fill('#h-addr', 'Onbestaandestraat 1');
+  await a.click('[data-act="hole-save"]');
+  await sleep(700);
+  await a.click('[data-act="toggle-edit-holes"]');
+  await a.click('[data-act="tab"][data-tab="map"]');
+  await a.waitForFunction(() => document.querySelectorAll('#map .pin').length === 13, null, { timeout: 5000 }).then(() => ok(true, 'onbekend adres verdwijnt van de kaart')).catch(() => ok(false, 'onbekend adres verdwijnt van de kaart'));
+  ok((await a.textContent('.v-map')).includes('nog niet op de kaart'), 'melding over ontbrekend adres');
+
+  // 21. nieuw spel met eigen kroegen
+  await a.click('[data-act="tab"][data-tab="more"]');
+  await a.click('[data-act="new-game"]');
+  await a.fill('#n-game', 'Feest Twee');
+  await a.click('[data-act="new-game-go"]');
+  await a.waitForSelector('#c-route');
+  ok(a.url().includes('g=feest-twee'), 'nieuw spel krijgt eigen link');
+  await a.click('#c-route [data-v="empty"]');
+  await a.fill('#in-pin', '1111');
+  await a.click('[data-act="create-game"]');
+  await a.waitForSelector('#in-name');
+  await a.fill('#in-name', 'Sander');
+  await a.click('[data-act="join"]');
+  await a.waitForSelector('[data-act="hole-add"]');
+  ok(await a.locator('.hole').count() === 0, 'nieuw spel begint zonder kroegen');
+  await a.click('[data-act="hole-add"]');
+  await a.fill('#h-name', 'Eigen Kroeg');
+  await a.fill('#h-drink', 'Radler');
+  await a.fill('#h-task', 'Zing het volkslied');
+  await a.fill('#h-win', '1');
+  await a.fill('#h-lose', '3');
+  await shot(a, '24-kroeg-bewerken', true);
+  await a.click('[data-act="hole-save"]');
+  await a.waitForSelector('.hole');
+  ok((await a.textContent('.hole')).includes('Eigen Kroeg') && (await a.textContent('.hole')).includes('Zing het volkslied'), 'eigen kroeg met opdracht toegevoegd');
 
   console.log(fails ? `\n${fails} FAILS` : '\nALL PASS');
   await browser.close();

@@ -144,7 +144,7 @@ input:focus, textarea:focus { border-color: var(--acc); }
   border-top: 1px solid rgba(37, 80, 58, 0.7);
 }
 .tabs button {
-  flex: 1; max-width: 140px; height: 52px; border: 0; border-radius: 14px; background: none;
+  flex: 1; max-width: 120px; min-width: 0; height: 52px; border: 0; border-radius: 14px; background: none;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   font-size: 12px; font-weight: 700; color: var(--mut);
 }
@@ -266,6 +266,51 @@ input:focus, textarea:focus { border-color: var(--acc); }
 .pr { display: flex; align-items: center; gap: 8px; }
 .pr b { font-size: 20px; }
 .busy { animation: blink 1.2s infinite; }
+
+/* ---------- opdrachten en straffen per kroeg ---------- */
+.hole-task { color: var(--acc); font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addr { color: var(--mut); font-size: 14px; text-decoration: none; }
+.addr u { color: var(--acc); text-underline-offset: 3px; }
+.hero-task { display: grid; gap: 2px; padding: 10px 14px; border-radius: 14px; background: rgba(244, 211, 94, 0.12); border: 1px solid rgba(244, 211, 94, 0.4); }
+.hero-task b { color: var(--acc); }
+.hero-task span { color: var(--txt); font-size: 14px; }
+.hero-pen { font-size: 14px; color: var(--bad); background: rgba(255, 133, 115, 0.1); padding: 8px 12px; border-radius: 12px; }
+.task-t { font-weight: 700; margin-bottom: 8px; }
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.duo .chip { white-space: normal; min-height: 50px; }
+.chip.on.good { background: var(--good); border-color: var(--good); color: #062313; }
+.chip.here { border-color: rgba(255, 133, 115, 0.6); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sheet h4 { margin: 20px 0 0; }
+
+/* ---------- kaart ---------- */
+.map-slot { border-radius: var(--r); overflow: hidden; border: 1px solid rgba(37, 80, 58, 0.8); background: var(--card); }
+#map { height: min(58vh, 480px); min-height: 300px; position: relative; z-index: 0; background: #dfe7e2; }
+.v-map .btnrow { margin-top: 0; }
+.pin-wrap { background: none; border: 0; }
+.pin {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--acc); color: var(--acc-ink); font: 850 15px/1 system-ui, sans-serif;
+  border: 2.5px solid #0a1a13; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+}
+.pin.done { background: var(--good); color: #062313; }
+.pin.cur { transform: scale(1.25); box-shadow: 0 0 0 5px rgba(244, 211, 94, 0.45), 0 3px 8px rgba(0, 0, 0, 0.45); }
+.leaflet-container { font: inherit; }
+.leaflet-popup-content-wrapper { background: var(--card); color: var(--txt); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.leaflet-popup-tip { background: var(--card); }
+.leaflet-popup-content { margin: 14px; font-size: 14px; line-height: 1.45; }
+.leaflet-popup-content b { font-size: 16px; }
+.pop-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.pop-btns .btn { min-height: 40px; padding: 8px 10px; font-size: 14px; text-decoration: none; }
+.leaflet-container a.btn.ghost { color: var(--txt); }
+.route { display: grid; }
+.rt { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(37, 80, 58, 0.6); }
+.rt:last-child { border-bottom: 0; }
+.rt-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 4px 0; background: none; border: 0; text-align: left; }
+.rt-no { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--card2); border: 1.5px solid var(--line); font-weight: 850; }
+.rt.cur .rt-no { background: var(--acc); border-color: var(--acc); color: var(--acc-ink); }
+a.mini { text-decoration: none; flex: none; }
+.linkbtn { background: none; border: 0; padding: 4px; color: var(--acc); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- stand ---------- */
 .board { display: grid; gap: 8px; }
