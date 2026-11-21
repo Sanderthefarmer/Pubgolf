@@ -1,11 +1,11 @@
 # ⛳ Pubgolf
 
-Scorekaart-webapp voor een pubgolf: iedereen opent de link op z'n eigen telefoon, vult een naam in en telt per hole z'n teugen. De stand werkt live bij.
+Scorekaart-webapp voor een pubgolf: iedereen opent de link op z'n eigen telefoon, vult een naam in en telt per hole z'n teugen. Elke teug is 1 punt; de minste punten staan bovenaan en wie aan het eind de meeste punten heeft, verliest. De stand werkt live bij.
 
-- **Teams**: een team deelt één glas en één score. Elke teamgenoot tikt op z'n eigen telefoon bij elke teug en de app telt alles op. Wie solo speelt mag een instelbaar aantal holes naar keuze overslaan; een overgeslagen hole telt als par.
-- **Kroegen per spel instelbaar**: naam, adres, een vast drankje met par of een **rad** dat drankje en par bepaalt (elk team draait zelf, of één draai voor de groep).
+- **Teams**: een team deelt één glas en één score. Elke teamgenoot tikt op z'n eigen telefoon bij elke teug en de app telt alles op. Wie solo speelt mag een instelbaar aantal holes naar keuze overslaan; een overgeslagen hole telt als 0 punten.
+- **Kroegen per spel instelbaar**: naam, adres, een vast drankje of een **rad** dat het drankje bepaalt (elk team draait zelf, of één draai voor de groep).
 - **Het rad zet je vooraf klaar** voor het hele spel. Een getrokken drankje verdwijnt van het rad, en met "dit drankje is er niet" mag je opnieuw draaien zonder dat drankje.
-- **Opdracht per kroeg**, zoals Split the G bij The Dublin House: gelukt gaat van je score af, mislukt komt erbij. Per kroeg kun je ook eigen **straffen** instellen.
+- **Opdracht per kroeg**, zoals Split the G bij The Dublin House: gelukt gaat van je punten af, mislukt komt erbij. Per kroeg kun je ook eigen **strafpunten** instellen.
 - **Kaart** met de route in volgorde, genummerde punten, je eigen locatie en een navigatieknop per kroeg.
 - **Live stand en scorekaart**, met meldingen als een team een hole afrondt.
 - Werkt ook met slecht bereik: scores worden op de telefoon bewaard en verstuurd zodra er weer verbinding is.
@@ -30,7 +30,7 @@ Een spel maak je aan in vijf stappen:
 
 1. **Het spel**: naam en organisator-pincode. Wie het spel aanmaakt is de organisator.
 2. **Kroegen**: vink de kroegen aan die meedoen, zet ze op volgorde en voeg eigen kroegen toe. De 14 kroegen van Pubgolf Zwolle staan klaar.
-3. **Drankjes**: per kroeg een vast drankje met par, of het rad.
+3. **Drankjes**: per kroeg een vast drankje, of het rad.
 4. **Het rad**: welke drankjes erop staan en of een getrokken drankje verdwijnt.
 5. **Overzicht** en aanmaken.
 

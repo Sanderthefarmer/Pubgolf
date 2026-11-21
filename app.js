@@ -373,10 +373,10 @@
     if (own) {
       // Een teamgenoot (of de organisator) sloeg de hole van mijn team op: ik krijg dezelfde uitslag in beeld.
       if (term.cls === 'hio' || term.cls === 'good') confetti();
-      splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
+      splash(term.t.replace(' 🎯', ''), term.cls, pts(st));
       return;
     }
-    toast(`${u.emoji} ${u.name}: ${term.t} op hole ${holeNo(hid)}`, term.cls === 'hio' ? 'gold' : '');
+    toast(`${u.emoji} ${u.name}: ${term.cls === 'hio' ? 'in één keer leeg 🎯' : pts(st)} op hole ${holeNo(hid)}`, term.cls === 'hio' ? 'gold' : '');
   }
 
   // ------------------------------------------------------------ domein
@@ -488,7 +488,7 @@
   const penTotal = (sc) => (sc && Array.isArray(sc.pens) ? sc.pens.reduce((a, p) => a + (p ? +p.n || 0 : 0), 0) : 0);
   const city = () => (S.data.meta && S.data.meta.city) || '';
   const holePens = (hole) => (hole && Array.isArray(hole.hp) ? hole.hp.filter(Boolean) : []);
-  /** Slagen erbij of eraf door de opdracht van een kroeg (bijv. Split the G). */
+  /** Punten erbij of eraf door de opdracht van een kroeg (bijv. Split the G). */
   const taskMod = (hole, sc) => (hole && hole.task && sc ? (sc.task === 'w' ? +hole.win || 0 : sc.task === 'l' ? +hole.lose || 0 : 0) : 0);
   const fmtMod = (n) => (n > 0 ? '+' + n : n < 0 ? '−' + Math.abs(n) : '±0');
   const hasGeo = (h) => !!h && h.lat != null && h.lng != null && Number.isFinite(+h.lat) && Number.isFinite(+h.lng);
@@ -497,47 +497,39 @@
       : hasGeo(h) ? (+h.lat).toFixed(6) + ',' + (+h.lng).toFixed(6) : [h.name, city()].filter(Boolean).join(', ');
     return 'https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=' + encodeURIComponent(dest);
   }
-  function strokesOf(sc, par, hole) {
-    if (!sc || !sc.done || par == null) return null;
-    if (sc.skip) return par;   // een overgeslagen hole telt als par
-    return (sc.dnf ? par + dnfExtra() : Math.max(1, sipsOf(sc))) + penTotal(sc) + taskMod(hole, sc);
+  /** Punten op een hole: elke teug is één punt. Overslaan telt als 0. */
+  function strokesOf(sc, _par, hole) {
+    if (!sc || !sc.done) return null;
+    if (sc.skip) return 0;   // een overgeslagen hole telt als 0 punten
+    return Math.max(0, sipsOf(sc) + (sc.dnf ? dnfExtra() : 0) + penTotal(sc) + taskMod(hole, sc));
   }
-  function termFor(sc, strokes, par, hole) {
-    const d = strokes - par;
+  const isOneGo = (sc, hole) => !!sc && !sc.skip && !sc.dnf && sipsOf(sc) === 1 && !penTotal(sc) && taskMod(hole, sc) <= 0;
+  function termFor(sc, strokes, _par, hole) {
     if (sc.skip) return { t: 'Overgeslagen', cls: 'par' };
     if (sc.dnf) return { t: 'Niet opgedronken', cls: 'bad' };
-    if (sipsOf(sc) === 1 && par >= 2 && !penTotal(sc) && taskMod(hole, sc) <= 0) return { t: 'Hole-in-one! 🎯', cls: 'hio' };
-    if (d <= -3) return { t: 'Albatros', cls: 'good' };
-    if (d === -2) return { t: 'Eagle', cls: 'good' };
-    if (d === -1) return { t: 'Birdie', cls: 'good' };
-    if (d === 0) return { t: 'Par', cls: 'par' };
-    if (d === 1) return { t: 'Bogey', cls: 'bad' };
-    if (d === 2) return { t: 'Dubbel bogey', cls: 'bad' };
-    if (d === 3) return { t: 'Triple bogey', cls: 'bad' };
-    return { t: '+' + d, cls: 'bad' };
+    if (isOneGo(sc, hole)) return { t: 'In één keer leeg! 🎯', cls: 'hio' };
+    return { t: 'Glas leeg', cls: 'par' };
   }
-  const fmtRel = (d) => (d === 0 ? 'Par' : d > 0 ? '+' + d : '−' + Math.abs(d));
-  const relCls = (d) => (d < 0 ? 'good' : d > 0 ? 'bad' : 'par');
+  const pts = (n) => n + ' ' + (n === 1 ? 'punt' : 'punten');
   function totals(u) {
-    const t = { str: 0, par: 0, n: 0, hio: 0, skips: 0 };
+    const t = { str: 0, n: 0, hio: 0, skips: 0 };
     for (const h of liveHoles()) {
       const sc = scoreOf(u, h.id);
-      const info = holeInfo(h, u);
-      const st = strokesOf(sc, info.par, h);
+      const st = strokesOf(sc, null, h);
       if (st == null) continue;
-      t.str += st; t.par += info.par; t.n++;
+      t.str += st; t.n++;
       if (sc.skip) t.skips++;
-      else if (!sc.dnf && sipsOf(sc) === 1 && info.par >= 2) t.hio++;
+      else if (isOneGo(sc, h)) t.hio++;
     }
-    t.rel = t.str - t.par;
     return t;
   }
+  /** Stand: de minste punten (teugen) staat bovenaan, de meeste punten onderaan. */
   function ranking() {
     const rows = unitsList().map((u) => Object.assign({ u }, totals(u.id)));
-    rows.sort((a, b) => (b.n > 0) - (a.n > 0) || a.rel - b.rel || b.n - a.n || b.hio - a.hio || a.str - b.str || (a.u.name < b.u.name ? -1 : 1));
+    rows.sort((a, b) => (b.n > 0) - (a.n > 0) || a.str - b.str || b.n - a.n || (a.u.name < b.u.name ? -1 : 1));
     let rank = 0;
     rows.forEach((r, i) => {
-      if (i === 0 || r.n === 0 || rows[i - 1].rel !== r.rel || rows[i - 1].n === 0) rank = i + 1;
+      if (i === 0 || r.n === 0 || rows[i - 1].str !== r.str || rows[i - 1].n === 0) rank = i + 1;
       r.rank = r.n ? rank : null;
     });
     return rows;
@@ -898,8 +890,6 @@
     };
   }
   const wizWheel = () => ui.wiz.wheel.map((o) => ({ label: String(o.label || '').trim().slice(0, 30), par: clamp(Math.round(+o.par) || 1, 1, 20) })).filter((o) => o.label);
-  const stepper = (what, i, n) => `<div class="stepper"><button data-act="wiz" data-do="${what}" data-i="${i}" data-d="-1" aria-label="Par omlaag">−</button>
-    <span><small>par</small><b>${n}</b></span><button data-act="wiz" data-do="${what}" data-i="${i}" data-d="1" aria-label="Par omhoog">+</button></div>`;
   function viewWizard() {
     const w = ui.wiz;
     const chosen = w.pubs.map((pub, i) => ({ pub, i })).filter((x) => x.pub.on);
@@ -926,21 +916,20 @@
           <label class="field"><span>Adres (voor de kaart)</span><input type="text" maxlength="80" data-w="na" value="${esc(w.na)}" placeholder="bijv. Melkmarkt 37"></label>
           <button class="btn ghost" data-act="wiz" data-do="add">+ Toevoegen aan de route</button></div>`;
     } else if (w.step === 2) {
-      body = `<p class="mut">Kies per kroeg een vast drankje met par, of laat het rad beslissen.</p>
+      body = `<p class="mut">Kies per kroeg een vast drankje, of laat het rad beslissen.</p>
         <div class="rowbar"><span class="chips"><button class="chip" data-act="wiz" data-do="allfixed">Alles vast</button><button class="chip" data-act="wiz" data-do="allwheel">Alles op het rad</button></span></div>
         ${chosen.map((x, k) => `<div class="card wpub">
           <div class="wpub-h"><span class="rt-no">${k + 1}</span><b>${esc(x.pub.name)}</b></div>
           <div class="seg"><button data-act="wiz" data-do="type" data-i="${x.i}" data-v="fixed" class="${x.pub.type === 'wheel' ? '' : 'on'}">🍺 Vast drankje</button>
             <button data-act="wiz" data-do="type" data-i="${x.i}" data-v="wheel" class="${x.pub.type === 'wheel' ? 'on' : ''}">🎡 Rad</button></div>
-          ${x.pub.type === 'wheel' ? '<p class="mut small">Het rad bepaalt hier het drankje en de par.</p>'
-            : `<div class="wfix"><input type="text" maxlength="30" data-w="p.${x.i}.drink" value="${esc(x.pub.drink || '')}" placeholder="Drankje naar keuze" aria-label="Drankje bij ${esc(x.pub.name)}">${stepper('par', x.i, clamp(+x.pub.par || 3, 1, 20))}</div>`}
+          ${x.pub.type === 'wheel' ? '<p class="mut small">Het rad bepaalt hier het drankje.</p>'
+            : `<div class="wfix"><input type="text" maxlength="30" data-w="p.${x.i}.drink" value="${esc(x.pub.drink || '')}" placeholder="Drankje naar keuze" aria-label="Drankje bij ${esc(x.pub.name)}"></div>`}
           ${x.pub.task ? `<p class="hole-task">🎯 Opdracht: ${esc(x.pub.task)} · gelukt ${fmtMod(+x.pub.win || 0)}, mislukt ${fmtMod(+x.pub.lose || 0)}</p>` : ''}
         </div>`).join('')}`;
     } else if (w.step === 3) {
       body = `<p class="mut">${onWheel.length ? 'Het rad geldt bij: ' + esc(onWheel.map((x) => x.pub.name).join(', ')) + '.' : 'Geen enkele kroeg gebruikt nu het rad. Je kunt doorgaan; het rad is later ook nog aan te passen.'}</p>
         <div class="wheel-box small" id="wiz-prev">${wheelPreview(wizWheel())}</div>
         <div class="wlist">${w.wheel.map((o, i) => `<div class="wrow on"><input type="text" maxlength="30" data-w="w.${i}.label" value="${esc(o.label || '')}" placeholder="Drankje" aria-label="Drankje ${i + 1} op het rad">
-          ${stepper('wpar', i, clamp(Math.round(+o.par) || 1, 1, 20))}
           <button class="mini danger" data-act="wiz" data-do="wdel" data-i="${i}" aria-label="Verwijder">✕</button></div>`).join('')}</div>
         <button class="btn ghost" data-act="wiz" data-do="wadd">+ Drankje op het rad</button>
         <button class="chip wide ${w.once ? 'on' : ''}" data-act="wiz" data-do="once">Een getrokken drankje verdwijnt van het rad</button>`;
@@ -950,8 +939,8 @@
         <div class="card"><h3>${esc(w.title || 'Pubgolf')}</h3>
           <p class="mut small">${chosen.length} ${chosen.length === 1 ? 'kroeg' : 'kroegen'} · ${chosen.length - onWheel.length} met een vast drankje · ${onWheel.length} met het rad</p>
           <div class="sum">${chosen.map((x, k) => `<div><span class="rt-no">${k + 1}</span><span class="pn"><b>${esc(x.pub.name)}</b>
-            <small>${x.pub.type === 'wheel' ? '🎡 Het rad' : esc((x.pub.drink || '').trim() || 'Drankje naar keuze') + ' · par ' + clamp(+x.pub.par || 3, 1, 20)}${x.pub.task ? ' · 🎯 ' + esc(x.pub.task) : ''}</small></span></div>`).join('')}</div>
-          ${onWheel.length ? `<p class="mut small">Op het rad: ${wh.map((o) => esc(o.label) + ' (par ' + o.par + ')').join(', ')}.${w.once ? ' Een getrokken drankje verdwijnt.' : ''}</p>` : ''}</div>`;
+            <small>${x.pub.type === 'wheel' ? '🎡 Het rad' : esc((x.pub.drink || '').trim() || 'Drankje naar keuze')}${x.pub.task ? ' · 🎯 ' + esc(x.pub.task) : ''}</small></span></div>`).join('')}</div>
+          ${onWheel.length ? `<p class="mut small">Op het rad: ${wh.map((o) => esc(o.label)).join(', ')}.${w.once ? ' Een getrokken drankje verdwijnt.' : ''}</p>` : ''}</div>`;
     }
     return `<div class="wiz">
       <div class="wiz-top"><button class="icon" data-act="wiz" data-do="back">${ico('back')}${w.step ? 'Terug' : 'Lobby'}</button><span>Stap ${w.step + 1} van ${WIZ_STEPS.length}</span></div>
@@ -1030,10 +1019,10 @@
   function holeLine(h, u) {
     if (h.type === 'wheel') {
       const info = holeInfo(h, u);
-      if (info.drink && !info.needSpin) return `🎡 ${esc(info.drink)} · par ${info.par}`;
+      if (info.drink && !info.needSpin) return `🎡 ${esc(info.drink)}`;
       return '🎡 Rad bepaalt je drankje';
     }
-    return `${drinkIcon(h.drink)} ${esc(h.drink || 'Drankje')} · par ${Math.max(1, +h.par || 1)}`;
+    return `${drinkIcon(h.drink)} ${esc(h.drink || 'Drankje')}`;
   }
   function viewHoles() {
     const list = holesList();
@@ -1049,7 +1038,7 @@
       const allowed = skipsAllowed(mine);
       html += `<section class="round">
         <div class="round-top"><div><span class="lbl">${u && u.team ? esc(u.name) : 'Jouw ronde'}</span><b>${t.n} van ${live.length} holes</b></div>
-          <div class="round-stats"><div><span class="lbl">Score</span><b class="${t.n ? relCls(t.rel) : ''}">${t.n ? fmtRel(t.rel) : '–'}</b></div>
+          <div class="round-stats"><div><span class="lbl">Punten</span><b>${t.n ? t.str : '–'}</b></div>
             <div><span class="lbl">Plek</span><b>${row && row.rank ? row.rank + 'e' : '–'}</b></div></div></div>
         <div class="bar"><i style="width:${live.length ? Math.round((100 * t.n) / live.length) : 0}%"></i></div>
         ${allowed ? `<p class="mut small">Je speelt solo en mag ${allowed} holes naar keuze overslaan. Nog ${Math.max(0, allowed - t.skips)} over.</p>` : ''}
@@ -1083,7 +1072,7 @@
              <button class="mini" data-act="hole-edit" data-id="${h.id}" aria-label="Bewerken">${ico('edit')}</button></div>`
           : st != null
             ? (sc.skip ? '<div class="hole-score"><span class="rel">overgeslagen</span></div>'
-              : `<div class="hole-score"><b>${st}</b><span class="rel ${relCls(st - info.par)}">${fmtRel(st - info.par)}</span></div>`)
+              : `<div class="hole-score"><b>${st}</b><span class="rel par">${st === 1 ? 'punt' : 'punten'}</span></div>`)
             : `<div class="hole-go">${ico('chev')}</div>`}
       </div>`;
     });
@@ -1111,36 +1100,36 @@
     const term = preview != null ? termFor(draft, preview, info.par, h) : null;
     const needTask = !!h.task && !sc.task;
     const allPens = holePens(h).concat(penList());
-    const ringCls = sips === 0 ? '' : sips < info.par ? 'under' : sips === info.par ? 'even' : 'over';
+    const ringCls = sips === 0 ? '' : 'even';
     const canDec = +((sc.by || {})[scoreKey(uidKey)]) > 0 || (isOrg() && sips > 0);
     const allowed = skipsAllowed(uidKey);
     const left = allowed - skipsUsed(uidKey);
     return `<section class="card score">
       <h3>${scoreTitle(u)}</h3>
-      <p class="mut small">${u.members.length > 1 ? 'Jullie delen één glas. Tik op de cirkel bij elke teug, wie er ook drinkt: alle teugen tellen samen.' : 'Tik op de cirkel bij elke teug. In één keer leeg is een hole-in-one.'}</p>
+      <p class="mut small">${u.members.length > 1 ? 'Jullie delen één glas. Tik op de cirkel bij elke teug, wie er ook drinkt: alle teugen tellen samen.' : 'Tik op de cirkel bij elke teug. Elke teug is 1 punt.'}</p>
       <div class="counter ${sc.dnf ? 'dim' : ''}">
         <button class="cbtn" data-act="sip" data-d="-1" aria-label="Eén teug minder" ${canDec ? '' : 'disabled'}>−</button>
         <button class="tap ${ringCls}" data-act="sip" data-d="1" aria-label="Eén teug erbij">
           <svg class="ring" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="54"/>
-            <circle class="ring-fg" cx="60" cy="60" r="54" stroke-dasharray="${RING}" stroke-dashoffset="${(RING * (1 - clamp(sips / info.par, 0, 1))).toFixed(1)}"/></svg>
+            <circle class="ring-fg" cx="60" cy="60" r="54" stroke-dasharray="${RING}" stroke-dashoffset="${(RING * (1 - clamp(sips / 6, 0, 1))).toFixed(1)}"/></svg>
           <span class="cnum"><b>${sips}</b><span>${sips === 1 ? 'teug' : 'teugen'}</span></span>
         </button>
-        <div class="tap-hint"><span class="lbl">Par</span><b>${info.par}</b>tik = +1</div>
+        <div class="tap-hint"><span class="lbl">Elke tik</span><b>+1</b>teug</div>
       </div>
       ${byLine(u, sc)}
       <div class="quick">${[1, 2, 3, 4, 5, 6].map((n) => `<button class="chip ${!sc.dnf && sips === n ? 'on' : ''}" data-act="sip-set" data-n="${n}">${n === 1 ? '1× 🎯' : n}</button>`).join('')}</div>
-      <button class="chip wide ${sc.dnf ? 'on bad' : ''}" data-act="dnf">🚫 Niet opgedronken (par + ${dnfExtra()})</button>
+      <button class="chip wide ${sc.dnf ? 'on bad' : ''}" data-act="dnf">🚫 Niet opgedronken (+${dnfExtra()} punten)</button>
       ${h.task ? `<h4>Opdracht</h4>
         <p class="task-t">🎯 ${esc(h.task)}</p>
         <div class="duo"><button class="chip ${sc.task === 'w' ? 'on good' : ''}" data-act="task" data-v="w">✅ Gelukt ${fmtMod(+h.win || 0)}</button>
           <button class="chip ${sc.task === 'l' ? 'on bad' : ''}" data-act="task" data-v="l">❌ Mislukt ${fmtMod(+h.lose || 0)}</button></div>` : ''}
-      <h4>Strafslagen</h4>
+      <h4>Strafpunten</h4>
       <div class="chips">${allPens.map((pn, i) => `<button class="chip ${i < holePens(h).length ? 'here' : ''}" data-act="pen-add" data-i="${i}">+${+pn.n || 1} ${esc(pn.l)}</button>`).join('')}
         <button class="chip" data-act="pen-add" data-i="-1">+1 Anders</button></div>
       ${pens.length ? `<div class="pens">${pens.map((pn, i) => `<span class="pen">+${+pn.n || 0} ${esc(pn.l)} <button data-act="pen-del" data-i="${i}" aria-label="Verwijder">✕</button></span>`).join('')}</div>` : ''}
       <div class="result ${term && !needTask ? term.cls : ''}">${term == null ? '<span>Nog geen teugen geteld</span>'
         : needTask ? '<span>Kies nog of de opdracht gelukt is</span>'
-        : `<b>${esc(term.t)}</b><span>${preview} ${Math.abs(preview) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(preview - info.par)}</span>`}</div>
+        : `<b>${esc(term.t)}</b><span>${pts(preview)}</span>`}</div>
       <button class="btn big" data-act="score-done" ${preview == null || needTask ? 'disabled' : ''}>${sc.done ? 'Klaar ✓' : 'Glas leeg — score opslaan ✓'}</button>
       ${allowed && !sc.done ? `<button class="btn ghost" data-act="skip" ${left > 0 ? '' : 'disabled'}>Deze hole overslaan (nog ${Math.max(0, left)} van ${allowed})</button>` : ''}
     </section>`;
@@ -1154,7 +1143,7 @@
       return `<section class="card score saved">
         <h3>${scoreTitle(u)}</h3>
         <div class="saved-row"><div class="saved-n">–</div>
-          <div class="saved-t"><b>Overgeslagen</b><span>telt als par · ${skipsUsed(uidKey)} van ${skipsAllowed(uidKey)} gebruikt</span></div></div>
+          <div class="saved-t"><b>Overgeslagen</b><span>telt als 0 punten · ${skipsUsed(uidKey)} van ${skipsAllowed(uidKey)} gebruikt</span></div></div>
         ${lock || !canScore(uidKey) ? '' : '<button class="btn ghost" data-act="unskip">Toch spelen</button>'}${foot}
       </section>`;
     }
@@ -1167,8 +1156,8 @@
       <h3>${scoreTitle(u)}</h3>
       <div class="saved-row"><div class="saved-n">${st}</div>
         <div class="saved-t"><b>${esc(term.t)}</b>
-          <span>${sc.dnf ? 'niet opgedronken' : (n === 1 ? 'in 1 teug' : 'in ' + (n || 1) + ' teugen')}${pen ? ' + ' + pen + ' straf' : ''}${h.task && sc.task ? ' · opdracht ' + (sc.task === 'w' ? 'gelukt ' : 'mislukt ') + fmtMod(mod) : ''} · par ${info.par}</span></div>
-        <div class="rel big ${relCls(st - info.par)}">${fmtRel(st - info.par)}</div></div>
+          <span>${n === 1 ? '1 teug' : n + ' teugen'}${sc.dnf ? ' + ' + dnfExtra() + ' niet opgedronken' : ''}${pen ? ' + ' + pen + ' straf' : ''}${h.task && sc.task ? ' · opdracht ' + (sc.task === 'w' ? 'gelukt ' : 'mislukt ') + fmtMod(mod) : ''}</span></div>
+        <div class="rel big par">${st === 1 ? 'punt' : 'punten'}</div></div>
       ${byLine(u, sc)}
       ${edBy ? `<p class="mut small">✏️ Na het opslaan aangepast door ${esc(edBy)}.</p>` : ''}
       ${lock || !canScore(uidKey) ? '' : '<button class="btn ghost" data-act="score-edit">Aanpassen</button>'}${foot}
@@ -1193,8 +1182,7 @@
       <div class="hero-no">${idx + 1}</div>
       <h2>${esc(h.name || 'Hole ' + (idx + 1))}</h2>
       ${h.addr ? `<a class="addr" href="${esc(navUrl(h))}" target="_blank" rel="noopener">${ico('pin')}${esc(h.addr)} · <u>Navigeer</u></a>` : ''}
-      ${h.off ? '<div class="hero-pen">Deze kroeg vervalt en telt niet mee.</div>' : `<div class="tiles"><div class="tile"><span class="lbl">Drankje</span><b>${h.type === 'wheel' ? '🎡 ' + (info.drink && !info.needSpin ? esc(info.drink) : 'Het rad') : drinkIcon(h.drink) + ' ' + esc(h.drink || 'Drankje')}</b></div>
-        <div class="tile par"><span class="lbl">Par</span><b>${info.par != null ? info.par : '?'}</b></div></div>`}
+      ${h.off ? '<div class="hero-pen">Deze kroeg vervalt en telt niet mee.</div>' : `<div class="tiles"><div class="tile"><span class="lbl">Drankje</span><b>${h.type === 'wheel' ? '🎡 ' + (info.drink && !info.needSpin ? esc(info.drink) : 'Het rad') : drinkIcon(h.drink) + ' ' + esc(h.drink || 'Drankje')}</b></div></div>`}
       ${h.task && !h.off ? `<div class="hero-task"><b>🎯 Opdracht: ${esc(h.task)}</b><span>Gelukt ${fmtMod(+h.win || 0)} · Mislukt ${fmtMod(+h.lose || 0)}</span></div>` : ''}
       ${hp.length && !h.off ? `<div class="hero-pen">⚠️ Straf hier: ${hp.map((x) => esc(x.l) + ' +' + (+x.n || 1)).join(' · ')}</div>` : ''}
       ${h.note ? `<p class="hero-note">${esc(h.note)}</p>` : ''}
@@ -1227,13 +1215,13 @@
         ${opts.length ? `<div class="wheel-box"><div class="pointer"></div>${wheelSvg(opts, rot)}</div>` : '<div class="empty">Er staat niets meer op dit rad. De organisator kan de kroeg aanpassen.</div>'}
         ${sp
           ? `<div class="spin-result"><span>${group ? 'Het drankje is' : (tu === myUnit() ? (unitById(tu).team ? 'Jullie drankje' : 'Jouw drankje') : 'Drankje van ' + esc((unitById(tu) || {}).name))}</span>
-              <b>${drinkIcon(sp.label)} ${esc(sp.label)}</b><span>par ${+sp.par || 1}</span></div>
+              <b>${drinkIcon(sp.label)} ${esc(sp.label)}</b></div>
               ${maySpin && !anyDone ? '<button class="btn ghost" data-act="drink-na">Dit drankje is er niet</button>' : ''}
               ${isOrg() ? '<button class="btn ghost" data-act="spin-reset">Opnieuw laten draaien</button>' : ''}`
           : maySpin && opts.length
             ? '<button class="btn big spin-btn" data-act="spin">Draai aan het rad!</button>'
             : ''}
-        ${!sp && opts.length ? `<p class="wheel-legend">${opts.map((o) => esc(o.label) + ' <b>par ' + (+o.par || 1) + '</b>').join(' · ')}</p>` : ''}
+        ${!sp && opts.length ? `<p class="wheel-legend">${opts.map((o) => esc(o.label)).join(' · ')}</p>` : ''}
         ${!sp && ws.reset ? '<p class="mut small">Alle drankjes zijn al een keer getrokken. Het rad begint opnieuw.</p>' : ''}
         ${!sp && ws.used.length ? `<p class="mut small used">Al gehad en van het rad: ${ws.used.map(esc).join(', ')}.</p>` : ''}
         ${naRows.length ? `<p class="mut small na">Hier niet verkrijgbaar: ${naRows.map((x) => esc(x.l) + (isOrg() ? ` <button class="linkbtn" data-act="na-del" data-id="${x.id}">terugzetten</button>` : '')).join(', ')}.</p>` : ''}
@@ -1262,16 +1250,16 @@
       let right = '<span class="mut">—</span>', sub = '';
       if (ps && ps.skip && ps.done) {
         right = '<span class="rel">overgeslagen</span>';
-        sub = 'telt als par';
+        sub = 'telt als 0 punten';
       } else if (st != null) {
         const term = termFor(ps, st, pi.par, h);
-        right = `<b>${st}</b><span class="rel ${relCls(st - pi.par)}">${fmtRel(st - pi.par)}</span>`;
+        right = `<b>${st}</b><span class="rel par">${st === 1 ? 'punt' : 'punten'}</span>`;
         sub = term.t + (h.type === 'wheel' ? ' · ' + pi.drink : '') + (h.task && ps.task ? ' · opdracht ' + (ps.task === 'w' ? 'gelukt' : 'mislukt') : '') + (ps.ed ? ' · aangepast' : '');
       } else if (ps && (sipsOf(ps) > 0 || ps.dnf)) {
         sub = 'bezig… ' + sipsOf(ps) + (sipsOf(ps) === 1 ? ' teug' : ' teugen');
         right = '<span class="busy">🍺</span>';
       } else if (h.type === 'wheel' && pi.drink) {
-        sub = pi.drink + ' · par ' + pi.par;
+        sub = pi.drink;
       }
       html += `<div class="prow ${u.id === myUnit() ? 'me' : ''}" ${isOrg() ? `data-act="pick-unit" data-id="${u.id}" role="button"` : ''}>
         <span class="av ${u.team ? 'duo' : ''}">${esc(u.emoji)}</span>
@@ -1317,8 +1305,8 @@
       html += `<div class="podium">${[pod[1], pod[0], pod[2]].map((r) => `<div class="pod p${pod.indexOf(r) + 1} ${r.u.id === mine ? 'me' : ''}" data-flip="${r.u.id}">
         <div class="pod-av ${r.u.team ? 'duo' : ''}">${esc(r.u.emoji)}</div>
         <b class="pod-name">${esc(r.u.name)}</b>
-        <span class="rel big ${relCls(r.rel)}">${fmtRel(r.rel)}</span>
-        <small>${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles}${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 3)) : ''}</small>
+        <span class="rel big par">${pts(r.str)}</span>
+        <small>${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 3)) : ''}</small>
         <div class="pod-step">${r.rank}</div></div>`).join('')}</div>`;
     }
     html += '<div class="board">';
@@ -1327,11 +1315,11 @@
         <div class="rank">${r.rank ? (!pod.length && medals[r.rank]) || r.rank : '–'}</div>
         <div class="av big ${r.u.team ? 'duo' : ''}">${esc(r.u.emoji)}</div>
         <div class="bmain"><b>${esc(r.u.name)}</b>
-          <small>${r.n ? `${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles} holes${r.skips ? ' · ' + r.skips + ' overgeslagen' : ''}${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
-        <div class="rel huge ${r.n ? relCls(r.rel) : 'par'}">${r.n ? fmtRel(r.rel) : '–'}</div>
+          <small>${r.n ? `${pts(r.str)} · ${r.n}/${nHoles} holes${r.skips ? ' · ' + r.skips + ' overgeslagen' : ''}${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
+        <div class="rel huge par">${r.n ? r.str : '–'}</div>
       </div>`;
     });
-    html += `</div><p class="mut small center">De minste teugen wint. De stand is ten opzichte van par over de holes die gespeeld zijn${rows.some((r) => skipsAllowed(r.u.id)) ? '; een overgeslagen hole telt als par' : ''}.</p>`;
+    html += `</div><p class="mut small center">Elke teug is 1 punt. De minste punten staan bovenaan; wie aan het eind de meeste punten heeft, verliest${rows.some((r) => skipsAllowed(r.u.id)) ? '. Een overgeslagen hole telt als 0 punten' : ''}.</p>`;
     return html;
   }
 
@@ -1342,9 +1330,7 @@
     const mine = myUnit();
     let html = '<div class="card-scroll"><table class="sc"><thead><tr><th class="sticky">Hole</th>';
     holes.forEach((h, i) => { html += `<th class="${h.off ? 'offcol' : ''}">${i + 1}</th>`; });
-    html += '<th>Tot</th><th>±</th></tr><tr class="parrow"><th class="sticky">Par</th>';
-    holes.forEach((h) => { html += `<td>${h.off ? '✕' : h.type === 'wheel' ? '🎡' : Math.max(1, +h.par || 1)}</td>`; });
-    html += '<td></td><td></td></tr></thead><tbody>';
+    html += '<th>Tot</th></tr></thead><tbody>';
     rows.forEach((r) => {
       html += `<tr class="${r.u.id === mine ? 'me' : ''}"><th class="sticky">${esc(r.u.emoji)} ${esc(r.u.name)}</th>`;
       holes.forEach((h) => {
@@ -1353,15 +1339,14 @@
         const st = h.off ? null : strokesOf(sc, info.par, h);
         if (st == null) { html += '<td class="nil">·</td>'; return; }
         if (sc.skip) { html += '<td><span class="cell skip">–</span></td>'; return; }
-        const d = st - info.par;
-        const cls = sc.dnf ? 'dnf' : termFor(sc, st, info.par, h).cls === 'hio' ? 'hio' : d < 0 ? 'under' : d > 0 ? 'over' : 'even';
+        const cls = sc.dnf ? 'dnf' : isOneGo(sc, h) ? 'hio' : 'even';
         html += `<td><span class="cell ${cls}">${st}</span></td>`;
       });
-      html += `<td class="tot">${r.n ? r.str : '·'}</td><td class="tot rel ${r.n ? relCls(r.rel) : ''}">${r.n ? fmtRel(r.rel) : '·'}</td></tr>`;
+      html += `<td class="tot">${r.n ? r.str : '·'}</td></tr>`;
     });
     html += `</tbody></table></div>
-      <div class="legend"><span><i class="cell hio">1</i> hole-in-one</span><span><i class="cell under">2</i> onder par</span>
-      <span><i class="cell even">3</i> par</span><span><i class="cell over">4</i> boven par</span><span><i class="cell dnf">7</i> niet leeg</span><span><i class="cell skip">–</i> overgeslagen</span></div>`;
+      <div class="legend"><span><i class="cell hio">1</i> in één keer leeg</span><span><i class="cell even">3</i> punten</span>
+      <span><i class="cell dnf">7</i> niet leeg</span><span><i class="cell skip">–</i> overgeslagen (0)</span></div>`;
     return html;
   }
 
@@ -1399,14 +1384,13 @@
     const solo = soloSkips();
     html += `<section class="card"><h3>Spelregels</h3>
       <ul class="rules">
-        <li>Elke kroeg is een hole met een drankje en een <b>par</b>: het aantal teugen waarin het glas leeg hoort te zijn.</li>
-        <li>Een <b>team</b> deelt één glas en drinkt het samen zo snel mogelijk leeg. Elke teug telt, wie hem ook neemt: twee keer een kwart en twee keer een kwart is vier teugen.</li>
-        <li>In één keer achterover is een <b>hole-in-one</b>. De minste teugen wint.</li>
-        ${solo ? `<li>Wie <b>solo</b> speelt mag ${solo} holes naar keuze overslaan. Een overgeslagen hole telt als par.</li>` : ''}
-        <li>Staat er een <b>rad</b> bij de hole, dan bepaalt het rad het drankje en de par.${wheelOnce() ? ' Een drankje dat je al trok verdwijnt van jouw rad.' : ''} Is het drankje er niet, meld dat dan en draai opnieuw.</li>
-        <li>Bij sommige kroegen hoort een <b>opdracht</b>, zoals Split the G: gelukt gaat van je score af, mislukt komt erbij.</li>
-        <li>Glas niet leeg? Dan krijg je par + ${dnfExtra()}.</li>
-        ${penList().length ? `<li>Strafslagen: ${penList().map((p) => esc(p.l) + ' +' + (+p.n || 1)).join(', ')}.</li>` : ''}
+        <li>Elke kroeg is een hole met een drankje. <b>Elke teug is 1 punt.</b> De minste punten staan bovenaan; wie aan het eind de meeste punten heeft, verliest.</li>
+        <li>Een <b>team</b> deelt één glas en drinkt het samen leeg. Elke teug telt, wie hem ook neemt: twee keer een kwart en twee keer een kwart is vier teugen.</li>
+        ${solo ? `<li>Wie <b>solo</b> speelt mag ${solo} holes naar keuze overslaan. Een overgeslagen hole telt als 0 punten.</li>` : ''}
+        <li>Staat er een <b>rad</b> bij de hole, dan bepaalt het rad het drankje.${wheelOnce() ? ' Een drankje dat je al trok verdwijnt van jouw rad.' : ''} Is het drankje er niet, meld dat dan en draai opnieuw.</li>
+        <li>Bij sommige kroegen hoort een <b>opdracht</b>, zoals Split the G: gelukt gaat van je punten af, mislukt komt erbij.</li>
+        <li>Glas niet leeg? Dan krijg je je teugen + ${dnfExtra()} punten.</li>
+        ${penList().length ? `<li>Strafpunten: ${penList().map((p) => esc(p.l) + ' +' + (+p.n || 1)).join(', ')}.</li>` : ''}
         <li><b>Eerlijk spelen:</b> je vult alleen de score van je eigen team in. ${EDIT_MIN ? 'Tot ' + EDIT_MIN + ' minuten na het opslaan kun je nog iets herstellen, daarna' : 'Na het opslaan'} kan alleen de organisator een score aanpassen, en dat is voor iedereen zichtbaar.</li>
       </ul></section>`;
     html += `<section class="card"><h3>Jij</h3>`;
@@ -1426,7 +1410,7 @@
       html += `<p class="mut small">Als organisator deel je de teams in, pas je kroegen en het rad aan en kun je elke score corrigeren.</p>
         <div class="stack">
           <button class="btn ghost" data-act="teams">Teams indelen</button>
-          <button class="btn ghost" data-act="settings">Spelinstellingen en strafslagen</button>
+          <button class="btn ghost" data-act="settings">Spelinstellingen en strafpunten</button>
           <button class="btn ghost" data-act="wheel-edit">Het rad instellen</button>
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
           <button class="btn ghost" data-act="players">Spelers beheren</button>
@@ -1608,7 +1592,6 @@
         <button data-act="seg" data-v="wheel" class="${d.type === 'wheel' ? 'on' : ''}">🎡 Rad</button></div>
       <div class="when when-fixed">
         <label class="field"><span>Drankje</span><input id="h-drink" type="text" maxlength="30" value="${esc(d.drink || '')}" placeholder="bijv. Biertje"></label>
-        <label class="field"><span>Par (aantal teugen)</span><input id="h-par" type="number" inputmode="numeric" min="1" max="20" value="${Math.max(1, +d.par || 3)}"></label>
       </div>
       <div class="when when-wheel">
         <div class="seg" id="h-mode" data-v="${d.wheelMode === 'group' ? 'group' : 'player'}">
@@ -1617,18 +1600,18 @@
         <div class="seg" id="h-wsrc" data-v="${own.length ? 'own' : 'game'}">
           <button data-act="seg" data-v="game" class="${own.length ? '' : 'on'}">Rad van het spel</button>
           <button data-act="seg" data-v="own" class="${own.length ? 'on' : ''}">Eigen rad voor deze kroeg</button></div>
-        <p class="mut small when-game">Op het rad van het spel staat nu: ${gameWheel().map((o) => esc(o.label) + ' (par ' + (+o.par || 1) + ')').join(', ')}. Aanpassen kan via Meer → Het rad instellen.</p>
-        <label class="field when-own"><span>Drankjes op het rad — één per regel, met de par achter een komma</span>
-          <textarea id="h-opts" rows="6" spellcheck="false">${esc(opts.map((o) => o.label + ', ' + (+o.par || 1)).join('\n'))}</textarea></label>
+        <p class="mut small when-game">Op het rad van het spel staat nu: ${gameWheel().map((o) => esc(o.label)).join(', ')}. Aanpassen kan via Meer → Het rad instellen.</p>
+        <label class="field when-own"><span>Drankjes op het rad — één per regel</span>
+          <textarea id="h-opts" rows="6" spellcheck="false">${esc(opts.map((o) => o.label).join('\n'))}</textarea></label>
       </div>
       <h4>Opdracht (optioneel)</h4>
       <label class="field"><span>Wat moet je doen?</span><input id="h-task" type="text" maxlength="60" value="${esc(d.task || '')}" placeholder="bijv. Split the G"></label>
       <div class="two">
-        <label class="field"><span>Gelukt: slagen eraf</span><input id="h-win" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.win || 0 : 2)}"></label>
-        <label class="field"><span>Mislukt: slagen erbij</span><input id="h-lose" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.lose || 0 : 2)}"></label>
+        <label class="field"><span>Gelukt: punten eraf</span><input id="h-win" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.win || 0 : 2)}"></label>
+        <label class="field"><span>Mislukt: punten erbij</span><input id="h-lose" type="number" inputmode="numeric" min="0" max="20" value="${Math.abs(d.task ? +d.lose || 0 : 2)}"></label>
       </div>
       <h4>Straffen bij deze kroeg (optioneel)</h4>
-      <label class="field"><span>Eén per regel, met het aantal slagen achter een komma</span>
+      <label class="field"><span>Eén per regel, met het aantal punten achter een komma</span>
         <textarea id="h-hp" rows="2" spellcheck="false" placeholder="bijv. Naar de wc, 2">${esc(holePens(d).map((x) => x.l + ', ' + (+x.n || 1)).join('\n'))}</textarea></label>
       <label class="field"><span>Opmerking (optioneel)</span><input id="h-note" type="text" maxlength="120" value="${esc(d.note || '')}" placeholder="bijv. Verzamelen op het terras"></label>
       ${h ? `<h4>Lukt deze kroeg niet?</h4>
@@ -1651,10 +1634,10 @@
     openSheet(`<h2>Spelinstellingen</h2>
       <label class="field"><span>Naam van het spel</span><input id="s-title" type="text" maxlength="40" value="${esc(m.title || '')}"></label>
       <label class="field"><span>Stad (voor de kaart en navigatie)</span><input id="s-city" type="text" maxlength="40" value="${esc(m.city || '')}" placeholder="bijv. Zwolle"></label>
-      <label class="field"><span>Extra slagen bij "niet opgedronken" (bovenop par)</span><input id="s-dnf" type="number" inputmode="numeric" min="0" max="20" value="${dnfExtra()}"></label>
+      <label class="field"><span>Strafpunten bij "niet opgedronken" (bovenop de teugen)</span><input id="s-dnf" type="number" inputmode="numeric" min="0" max="20" value="${dnfExtra()}"></label>
       <label class="field"><span>Aantal holes dat een solospeler mag overslaan (als de rest in teams speelt)</span><input id="s-solo" type="number" inputmode="numeric" min="0" max="20" value="${soloSkips()}"></label>
       <button class="chip wide ${wheelOnce() ? 'on' : ''}" id="s-once" data-act="tog" data-v="${wheelOnce() ? 1 : 0}">Een getrokken drankje verdwijnt van het rad</button>
-      <label class="field"><span>Strafslagen — één per regel, met het aantal achter een komma</span>
+      <label class="field"><span>Strafpunten — één per regel, met het aantal achter een komma</span>
         <textarea id="s-pens" rows="5" spellcheck="false">${esc(penList().map((p) => p.l + ', ' + (+p.n || 1)).join('\n'))}</textarea></label>
       ${LOCAL ? '' : '<label class="field"><span>Nieuwe organisator-pincode (leeg laten = niet wijzigen)</span><input id="s-pin" type="text" inputmode="numeric" maxlength="8" autocomplete="off"></label>'}
       <button class="btn big" data-act="settings-save">Opslaan</button>
@@ -1703,8 +1686,8 @@
       <p class="mut small">Zet het rad klaar voordat jullie beginnen. Het geldt voor elke kroeg waar je bij het drankje voor "Rad" kiest.
         ${used.length ? 'Nu in gebruik bij: ' + esc(used.join(', ')) + '.' : 'Nog bij geen enkele kroeg in gebruik: kies bij een kroeg "Rad" als drankje.'}</p>
       <div class="wheel-box small" id="w-prev">${wheelPreview(opts)}</div>
-      <label class="field"><span>Eén drankje per regel, met de par (aantal teugen) achter een komma</span>
-        <textarea id="w-opts" rows="7" spellcheck="false">${esc(opts.map((o) => o.label + ', ' + (+o.par || 1)).join('\n'))}</textarea></label>
+      <label class="field"><span>Eén drankje per regel</span>
+        <textarea id="w-opts" rows="7" spellcheck="false">${esc(opts.map((o) => o.label).join('\n'))}</textarea></label>
       <p id="w-msg" class="msg"></p>
       <button class="btn big" data-act="wheel-save">Opslaan</button>
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
@@ -1740,9 +1723,9 @@
     setTimeout(() => { const el = $('#c-pin'); if (el) el.focus(); }, 50);
   }
   function sheetPen() {
-    openSheet(`<h2>Strafslag</h2>
+    openSheet(`<h2>Strafpunt</h2>
       <label class="field"><span>Waarvoor?</span><input id="x-l" type="text" maxlength="30" placeholder="bijv. Te hard gelachen"></label>
-      <label class="field"><span>Aantal slagen</span><input id="x-n" type="number" inputmode="numeric" min="1" max="20" value="1"></label>
+      <label class="field"><span>Aantal punten</span><input id="x-n" type="number" inputmode="numeric" min="1" max="20" value="1"></label>
       <button class="btn big" data-act="pen-custom-save">Toevoegen</button>
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
   }
@@ -1995,7 +1978,7 @@
       setScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: pn.l, n: +pn.n || 1 }]) });
     },
     'pen-custom-save'() {
-      const l = val('x-l') || 'Strafslag';
+      const l = val('x-l') || 'Strafpunt';
       const n = clamp(+val('x-n') || 1, 1, 20);
       const sc = scoreOf(targetUnit(), ui.hole) || {};
       setScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: l.slice(0, 30), n }]) });
@@ -2023,7 +2006,7 @@
       const term = termFor(saved, st, info.par, h);
       buzz(term.cls === 'hio' ? [60, 40, 60, 40, 160] : 30);
       if (term.cls === 'hio') confetti(['🎯', '⛳', '🏆', '✨']); else if (term.cls === 'good') confetti();
-      splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
+      splash(term.t.replace(' 🎯', ''), term.cls, pts(st));
       render(true);
     },
     'score-edit'() {
@@ -2037,7 +2020,7 @@
       const u = targetUnit();
       const allowed = skipsAllowed(u);
       if (!allowed || skipsUsed(u) >= allowed) { toast('Je hebt geen holes meer om over te slaan.'); return; }
-      if (!confirm('Deze hole overslaan? Hij telt als par en je hebt er daarna nog ' + (allowed - skipsUsed(u) - 1) + ' over.')) return;
+      if (!confirm('Deze hole overslaan? Hij telt als 0 punten en je hebt er daarna nog ' + (allowed - skipsUsed(u) - 1) + ' over.')) return;
       if (setScore({ skip: true, done: true, dt: now(), by: null, dnf: null, task: null, pens: null })) toast('Hole overgeslagen');
     },
     'unskip'() { ui.editing = false; setScore({ skip: null, done: null, dt: null, ed: null }); },
@@ -2079,7 +2062,7 @@
         }
       } else {
         doc.drink = val('h-drink').slice(0, 30) || 'Drankje';
-        doc.par = clamp(Math.round(+val('h-par')) || 1, 1, 20);
+        doc.par = clamp(Math.round(+prev.par) || 3, 1, 20);   // intern; de app toont geen par meer
       }
       const addr = val('h-addr').slice(0, 80);
       if (addr) {

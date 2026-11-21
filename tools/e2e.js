@@ -108,12 +108,12 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="sip-set"][data-n="1"]');
   await a.click('[data-act="score-done"]');
   await a.waitForSelector('.saved');
-  ok((await a.textContent('.saved')).includes('Hole-in-one'), 'A: hole-in-one opgeslagen');
+  ok((await a.textContent('.saved')).includes('In één keer leeg'), 'A: in één keer leeg opgeslagen');
   await shot(a, '05-hole-saved');
 
   // 4. B ziet het live
   await b.click('[data-act="tab"][data-tab="board"]');
-  await b.waitForFunction(() => document.querySelector('.brow') && document.querySelector('.board').textContent.includes('−2'), null, { timeout: 5000 }).then(() => ok(true, 'B ziet score van A live (−2)')).catch(() => ok(false, 'B ziet score van A live (−2)'));
+  await b.waitForFunction(() => document.querySelector('.brow') && document.querySelector('.board').textContent.includes('1 punt'), null, { timeout: 5000 }).then(() => ok(true, 'B ziet score van A live (1 punt)')).catch(() => ok(false, 'B ziet score van A live (1 punt)'));
   ok(await b.locator('.toast').count() >= 1, 'B krijgt een melding');
   await shot(b, '06-board');
 
@@ -167,7 +167,6 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="hole-edit"] >> nth=1');
   await a.waitForSelector('#h-name');
   await a.fill('#h-name', 'Café Test');
-  await a.fill('#h-par', '4');
   await a.fill('#h-hp', 'Naar de wc, 2');
   await shot(a, '13-sheet-hole');
   await a.click('[data-act="hole-save"]');
@@ -435,7 +434,6 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   const idx = async (name) => a.evaluate((n) => { const el = [...document.querySelectorAll('.wpub')].find((x) => x.textContent.includes(n)); return el.querySelector('[data-do="type"]').dataset.i; }, name);
   const iBeugel = await idx('Beugeltje'), iSwolsch = await idx('Swolsch'), iStam = await idx('Stamkroeg');
   await a.fill(`[data-w="p.${iBeugel}.drink"]`, 'Fluitje');
-  await a.click(`[data-do="par"][data-i="${iBeugel}"][data-d="-1"]`);
   await a.click(`[data-do="type"][data-i="${iSwolsch}"][data-v="wheel"]`);
   await a.click(`[data-do="type"][data-i="${iStam}"][data-v="wheel"]`);
   await sleep(200);
@@ -450,13 +448,12 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-do="wadd"]');
   await a.waitForSelector('[data-w="w.1.label"]');
   await a.fill('[data-w="w.1.label"]', 'Tonic');
-  await a.click('[data-do="wpar"][data-i="1"][data-d="1"]');
   await sleep(150);
   ok(await a.locator('#wiz-prev svg.wheel path').count() === 2, 'wizard: voorbeeld van het rad volgt de drankjes');
   await a.click('[data-do="next"]');
   await a.waitForSelector('[data-do="create"]');
   const sum = (await a.textContent('.sum')).replace(/\s+/g, ' ');
-  ok(sum.indexOf('Beugeltje') < sum.indexOf('Swolsch') && sum.indexOf('Swolsch') < sum.indexOf('Dublin') && sum.includes('Fluitje · par 2') && sum.includes('Guinness · par 4'), 'wizard: overzicht klopt met volgorde, drankjes en par');
+  ok(sum.indexOf('Beugeltje') < sum.indexOf('Swolsch') && sum.indexOf('Swolsch') < sum.indexOf('Dublin') && sum.includes('Fluitje') && sum.includes('Guinness') && !/\bpar\b/.test(sum), 'wizard: overzicht klopt met volgorde en drankjes, zonder par');
   await a.goBack();
   await a.waitForSelector('#wiz-prev');
   ok((await a.inputValue('[data-w="w.1.label"]')) === 'Tonic', 'terugknop gaat een stap terug en bewaart de invoer');
@@ -470,12 +467,12 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="join"]');
   await a.waitForSelector('.hole');
   const holesTxt = (await a.textContent('.view')).replace(/\s+/g, ' ');
-  ok(await a.locator('.hole').count() === 4 && holesTxt.includes('Fluitje · par 2') && holesTxt.includes('Split the G') && holesTxt.includes('Onze Stamkroeg'), 'het spel heeft precies de gekozen kroegen en drankjes');
+  ok(await a.locator('.hole').count() === 4 && holesTxt.includes('Fluitje') && !/\bpar\b/.test(holesTxt) && holesTxt.includes('Split the G') && holesTxt.includes('Onze Stamkroeg'), 'het spel heeft precies de gekozen kroegen en drankjes');
   ok(await a.locator('[data-act="toggle-edit-holes"]').count() === 1, 'wie het spel aanmaakt is organisator');
   await a.click('.hole >> nth=1');
   await a.waitForSelector('.wheel-legend');
   const leg = await a.textContent('.wheel-legend');
-  ok(leg.includes('Cola') && leg.includes('Tonic') && leg.includes('par 4') && !leg.includes('Wijn'), 'op het rad staan de drankjes uit de wizard');
+  ok(leg.includes('Cola') && leg.includes('Tonic') && !leg.includes('par') && !leg.includes('Wijn'), 'op het rad staan de drankjes uit de wizard');
   const other = await (await fetch(`${BASE}/db/games/${CODE}/meta/title.json`)).json();
   ok(other === 'Pubgolf Zwolle', 'het eerste spel staat er los van en is ongemoeid');
 
@@ -603,7 +600,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await sleep(200);
   ok(await o.locator('.counter').count() === 1 && await o.locator('[data-act="skip"]').count() === 0, 'een team van twee kan niet overslaan');
   await q.click('[data-act="tab"][data-tab="board"]');
-  await q.waitForFunction(() => [...document.querySelectorAll('[data-flip]')].some((r) => r.textContent.includes('Kees') && r.textContent.includes('4 overgeslagen') && r.textContent.includes('5/14')), null, { timeout: 6000 }).then(() => ok(true, 'overgeslagen holes tellen als par en als gespeeld in de stand')).catch(() => ok(false, 'overgeslagen holes tellen als par en als gespeeld in de stand'));
+  await q.waitForFunction(() => [...document.querySelectorAll('[data-flip]')].some((r) => r.textContent.includes('Kees') && r.textContent.includes('4 overgeslagen') && r.textContent.includes('5/14')), null, { timeout: 6000 }).then(() => ok(true, 'overgeslagen holes tellen als 0 punten en als gespeeld in de stand')).catch(() => ok(false, 'overgeslagen holes tellen als 0 punten en als gespeeld in de stand'));
   await shot(q, '33-stand-teams');
 
   // het rad: een getrokken drankje verdwijnt, en "is er niet" geeft een nieuwe draai
