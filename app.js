@@ -43,6 +43,22 @@
     if (sameDoc) location.reload();
   }
   const restart = () => goTo(location.origin + location.pathname);
+  // Lijn-iconen (24×24) voor een strakke, op elk toestel gelijke weergave.
+  const ICONS = {
+    flag: '<path d="M6 21V4"/><path d="M6 4.5l11 3.2L6 11"/><path d="M3 21h7"/>',
+    map: '<path d="M9 4 3 6.5V20l6-2.5 6 2.5 6-2.5V4l-6 2.5L9 4z"/><path d="M9 4v13.5M15 6.5V20"/>',
+    trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0V4z"/><path d="M8 6H5a3 3 0 0 0 3.2 4M16 6h3a3 3 0 0 1-3.2 4"/><path d="M12 13v4M8.5 20h7M10 17h4"/>',
+    grid: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 10h16M10 4v16"/>',
+    more: '<path d="M5 7h14M5 12h14M5 17h14"/>',
+    nav: '<path d="M12 3l7 18-7-4-7 4 7-18z"/>',
+    pin: '<path d="M12 21s-6.5-5.6-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.3"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>',
+    up: '<path d="M6 14l6-6 6 6"/>',
+    down: '<path d="M6 10l6 6 6-6"/>',
+    chev: '<path d="M9 6l6 6-6 6"/>',
+    back: '<path d="M15 6l-6 6 6 6"/>'
+  };
+  const ico = (name) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   const buzz = (ms) => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* negeren */ } };
 
   // ------------------------------------------------------------ config
@@ -468,20 +484,38 @@
     while (box.children.length > 3) box.removeChild(box.firstChild);
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 3600);
   }
+  const PAPER = ['#ffc53d', '#4ade80', '#5aa9ff', '#ff6b5e', '#c69cff', '#ffffff'];
   function confetti(emojis) {
-    const set = emojis || ['🎉', '⛳', '🍺', '✨', '🎯'];
+    const set = emojis || ['🎉', '⛳', '🍺', '✨'];
     const layer = document.createElement('div');
     layer.className = 'confetti';
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 44; i++) {
       const s = document.createElement('span');
-      s.textContent = set[i % set.length];
       s.style.left = Math.random() * 100 + '%';
-      s.style.animationDelay = Math.random() * 0.35 + 's';
-      s.style.fontSize = 18 + Math.random() * 20 + 'px';
+      s.style.animationDelay = Math.random() * 0.4 + 's';
+      s.style.setProperty('--x', (Math.random() * 120 - 60).toFixed(0) + 'px');
+      s.style.setProperty('--r', (360 + Math.random() * 540).toFixed(0) + 'deg');
+      if (i % 4 === 0) {
+        s.textContent = set[(i / 4) % set.length];
+        s.style.fontSize = 20 + Math.random() * 16 + 'px';
+      } else {
+        const paper = document.createElement('i');
+        paper.style.background = PAPER[i % PAPER.length];
+        s.appendChild(paper);
+      }
       layer.appendChild(s);
     }
     document.body.appendChild(layer);
-    setTimeout(() => layer.remove(), 2400);
+    setTimeout(() => layer.remove(), 2800);
+  }
+  /** Grote uitslag over het hele scherm, zoals op tv bij golf. Blokkeert geen tikken. */
+  function splash(text, cls, sub) {
+    document.querySelectorAll('.splash').forEach((el) => el.remove());
+    const el = document.createElement('div');
+    el.className = 'splash ' + (cls || '');
+    el.innerHTML = `<div class="splash-in"><b>${esc(text)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</div>`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1750);
   }
 
   // ------------------------------------------------------------ rad
@@ -506,7 +540,15 @@
       const left = mid > 180;
       g += `<text x="${left ? 13 : 187}" y="100" transform="rotate(${(left ? mid + 90 : mid - 90).toFixed(2)} 100 100)" text-anchor="${left ? 'start' : 'end'}" dominant-baseline="central" font-size="${fs}" font-weight="800" fill="#10220f">${esc(label)}</text>`;
     });
-    return `<svg class="wheel" viewBox="0 0 200 200" style="transform:rotate(${rot}deg)" aria-hidden="true">${g}<circle cx="100" cy="100" r="14" fill="#0a1a13" stroke="#f3f7f2" stroke-width="3"/></svg>`;
+    let pegs = '';
+    for (let i = 0; i < n && n > 1; i++) {
+      const a = (i * step * Math.PI) / 180;
+      pegs += `<circle cx="${(100 + 90 * Math.sin(a)).toFixed(2)}" cy="${(100 - 90 * Math.cos(a)).toFixed(2)}" r="2.6" fill="#fff" stroke="#0a1a13" stroke-width="0.8"/>`;
+    }
+    return `<svg class="wheel" viewBox="0 0 200 200" style="transform:rotate(${rot}deg)" aria-hidden="true">
+      <defs><radialGradient id="wheel-gloss" cx="50%" cy="50%" r="50%"><stop offset="55%" stop-color="#fff" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.22"/></radialGradient></defs>
+      ${g}<circle cx="100" cy="100" r="${R}" fill="url(#wheel-gloss)" pointer-events="none"/>${pegs}
+      <circle cx="100" cy="100" r="15" fill="#0a1a13" stroke="#fff" stroke-width="3"/><circle cx="100" cy="100" r="5" fill="#ffc53d"/></svg>`;
   }
   function playSpin(i, n, key) {
     const el = $('.wheel');
@@ -769,15 +811,25 @@
     const cur = currentHoleId();
     const players = playersList();
     let html = '';
+    if (pid) {
+      const t = totals(pid);
+      const mine = ranking().find((r) => r.p.id === pid);
+      html += `<section class="round">
+        <div class="round-top"><div><span class="lbl">Jouw ronde</span><b>${t.n} van ${list.length} holes</b></div>
+          <div class="round-stats"><div><span class="lbl">Score</span><b class="${t.n ? relCls(t.rel) : ''}">${t.n ? fmtRel(t.rel) : '–'}</b></div>
+            <div><span class="lbl">Plek</span><b>${mine && mine.rank ? mine.rank + 'e' : '–'}</b></div></div></div>
+        <div class="bar"><i style="width:${list.length ? Math.round((100 * t.n) / list.length) : 0}%"></i></div>
+      </section>`;
+    }
     if (cur) {
       const h = holeById(cur);
       const pinned = S.data.meta && S.data.meta.current === cur;
       html += `<button class="now" data-act="open-hole" data-id="${cur}">
-        <span class="now-l">${pinned ? '📍 We zijn nu bij' : '👉 Jouw volgende hole'}</span>
-        <span class="now-t">Hole ${holeNo(cur)} · ${esc(h.name || '')}</span><span class="now-go">›</span></button>`;
+        <span class="now-l">${pinned ? 'We zijn nu bij' : 'Jouw volgende hole'}</span>
+        <span class="now-t">Hole ${holeNo(cur)} · ${esc(h.name || '')}</span><span class="now-go">${ico('chev')}</span></button>`;
     }
     if (isOrg()) {
-      html += `<div class="rowbar"><button class="chip ${ui.editHoles ? 'on' : ''}" data-act="toggle-edit-holes">✏️ ${ui.editHoles ? 'Klaar met bewerken' : 'Kroegen bewerken'}</button></div>`;
+      html += `<div class="rowbar"><button class="chip ${ui.editHoles ? 'on' : ''}" data-act="toggle-edit-holes">${ico('edit')} ${ui.editHoles ? 'Klaar met bewerken' : 'Kroegen bewerken'}</button></div>`;
     }
     if (!list.length) html += '<div class="empty">Nog geen kroegen. De organisator kan ze toevoegen.</div>';
     list.forEach((h, i) => {
@@ -790,20 +842,21 @@
         <div class="hole-main"><div class="hole-name">${esc(h.name || 'Hole ' + (i + 1))}</div>
           <div class="hole-sub">${holeLine(h, pid)}</div>
           ${h.task ? `<div class="hole-task">🎯 ${esc(h.task)}</div>` : ''}
-          <div class="hole-meta">${h.addr ? esc(h.addr) + ' · ' : ''}${doneN}/${players.length} klaar</div></div>
+          <div class="hole-meta">${[h.addr ? esc(h.addr) : '', doneN ? doneN + '/' + players.length + ' klaar' : ''].filter(Boolean).join(' · ')}</div></div>
         ${ui.editHoles && isOrg()
-          ? `<div class="hole-tools"><button class="mini" data-act="hole-move" data-id="${h.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Omhoog">▲</button>
-             <button class="mini" data-act="hole-move" data-id="${h.id}" data-d="1" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Omlaag">▼</button>
-             <button class="mini" data-act="hole-edit" data-id="${h.id}" aria-label="Bewerken">✏️</button></div>`
+          ? `<div class="hole-tools"><button class="mini" data-act="hole-move" data-id="${h.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Omhoog">${ico('up')}</button>
+             <button class="mini" data-act="hole-move" data-id="${h.id}" data-d="1" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Omlaag">${ico('down')}</button>
+             <button class="mini" data-act="hole-edit" data-id="${h.id}" aria-label="Bewerken">${ico('edit')}</button></div>`
           : st != null
             ? `<div class="hole-score"><b>${st}</b><span class="rel ${relCls(st - info.par)}">${fmtRel(st - info.par)}</span></div>`
-            : '<div class="hole-go">›</div>'}
+            : `<div class="hole-go">${ico('chev')}</div>`}
       </div>`;
     });
     if (isOrg()) html += '<button class="btn ghost wide" data-act="hole-add">+ Kroeg toevoegen</button>';
     return html;
   }
 
+  const RING = 339.3;   // omtrek van de voortgangsring (r = 54)
   function scoreEditor(h, pid, info, sc) {
     const p = S.data.players[pid];
     const sips = clamp(+sc.sips || 0, 0, 99);
@@ -813,13 +866,18 @@
     const term = preview != null ? termFor(sc, preview, info.par, h) : null;
     const needTask = !!h.task && !sc.task;
     const allPens = holePens(h).concat(penList());
+    const ringCls = sips === 0 ? '' : sips < info.par ? 'under' : sips === info.par ? 'even' : 'over';
     return `<section class="card score">
       <h3>${mine ? 'Jouw score' : 'Score van ' + esc(p.name)}</h3>
-      <p class="mut small">Tel je teugen. In één keer leeg is een hole-in-one.</p>
+      <p class="mut small">Tik op de cirkel bij elke teug. In één keer leeg is een hole-in-one.</p>
       <div class="counter ${sc.dnf ? 'dim' : ''}">
-        <button class="cbtn" data-act="sip" data-d="-1" aria-label="Eén teug minder">−</button>
-        <div class="cnum"><b>${sips}</b><span>${sips === 1 ? 'teug' : 'teugen'}</span></div>
-        <button class="cbtn plus" data-act="sip" data-d="1" aria-label="Eén teug erbij">+1</button>
+        <button class="cbtn" data-act="sip" data-d="-1" aria-label="Eén teug minder" ${sips ? '' : 'disabled'}>−</button>
+        <button class="tap ${ringCls}" data-act="sip" data-d="1" aria-label="Eén teug erbij">
+          <svg class="ring" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="54"/>
+            <circle class="ring-fg" cx="60" cy="60" r="54" stroke-dasharray="${RING}" stroke-dashoffset="${(RING * (1 - clamp(sips / info.par, 0, 1))).toFixed(1)}"/></svg>
+          <span class="cnum"><b>${sips}</b><span>${sips === 1 ? 'teug' : 'teugen'}</span></span>
+        </button>
+        <div class="tap-hint"><span class="lbl">Par</span><b>${info.par}</b>tik = +1</div>
       </div>
       <div class="quick">${[1, 2, 3, 4, 5, 6].map((n) => `<button class="chip ${!sc.dnf && sips === n ? 'on' : ''}" data-act="sip-set" data-n="${n}">${n === 1 ? '1× 🎯' : n}</button>`).join('')}</div>
       <button class="chip wide ${sc.dnf ? 'on bad' : ''}" data-act="dnf">🚫 Niet opgedronken (par + ${dnfExtra()})</button>
@@ -862,22 +920,23 @@
     const pinned = S.data.meta && S.data.meta.current === h.id;
     const hp = holePens(h);
     let html = `<div class="subbar">
-      <button class="icon" data-act="back" aria-label="Terug">‹ Holes</button>
+      <button class="icon" data-act="back" aria-label="Terug">${ico('back')}Holes</button>
       <span>Hole ${idx + 1} van ${list.length}</span>
-      <span class="nav"><button class="icon" data-act="hole-nav" data-d="-1" ${idx <= 0 ? 'disabled' : ''} aria-label="Vorige">‹</button>
-      <button class="icon" data-act="hole-nav" data-d="1" ${idx >= list.length - 1 ? 'disabled' : ''} aria-label="Volgende">›</button></span></div>`;
+      <span class="nav"><button class="icon" data-act="hole-nav" data-d="-1" ${idx <= 0 ? 'disabled' : ''} aria-label="Vorige">${ico('back')}</button>
+      <button class="icon" data-act="hole-nav" data-d="1" ${idx >= list.length - 1 ? 'disabled' : ''} aria-label="Volgende">${ico('chev')}</button></span></div>`;
 
     html += `<section class="hero">
       <div class="hero-no">${idx + 1}</div>
       <h2>${esc(h.name || 'Hole ' + (idx + 1))}</h2>
-      ${h.addr ? `<a class="addr" href="${esc(navUrl(h))}" target="_blank" rel="noopener">📍 ${esc(h.addr)} · <u>Navigeer</u></a>` : ''}
-      <div class="hero-drink">${holeLine(h, pid)}</div>
+      ${h.addr ? `<a class="addr" href="${esc(navUrl(h))}" target="_blank" rel="noopener">${ico('pin')}${esc(h.addr)} · <u>Navigeer</u></a>` : ''}
+      <div class="tiles"><div class="tile"><span class="lbl">Drankje</span><b>${h.type === 'wheel' ? '🎡 ' + (info.drink && !info.needSpin ? esc(info.drink) : 'Het rad') : drinkIcon(h.drink) + ' ' + esc(h.drink || 'Drankje')}</b></div>
+        <div class="tile par"><span class="lbl">Par</span><b>${info.par != null ? info.par : '?'}</b></div></div>
       ${h.task ? `<div class="hero-task"><b>🎯 Opdracht: ${esc(h.task)}</b><span>Gelukt ${fmtMod(+h.win || 0)} · Mislukt ${fmtMod(+h.lose || 0)}</span></div>` : ''}
       ${hp.length ? `<div class="hero-pen">⚠️ Straf hier: ${hp.map((x) => esc(x.l) + ' +' + (+x.n || 1)).join(' · ')}</div>` : ''}
       ${h.note ? `<p class="hero-note">${esc(h.note)}</p>` : ''}
       ${pinned ? '<span class="badge">📍 Hier zijn we nu</span>' : ''}
-      ${isOrg() ? `<div class="chips center">${pinned ? '' : '<button class="chip" data-act="hole-pin">📍 Maak dit de actieve hole</button>'}
-        <button class="chip" data-act="hole-edit" data-id="${h.id}">✏️ Bewerken</button></div>` : ''}
+      ${isOrg() ? `<div class="chips center">${pinned ? '' : `<button class="chip" data-act="hole-pin">${ico('pin')} Maak actief</button>`}
+        <button class="chip" data-act="hole-edit" data-id="${h.id}">${ico('edit')} Bewerken</button></div>` : ''}
     </section>`;
 
     if (isOrg() && players.length > 1) {
@@ -893,7 +952,7 @@
       const rot = sp && opts.length ? (ui.wheelRot[key] != null ? ui.wheelRot[key] : -((+sp.i || 0) + 0.5) * step) : 0;
       const group = h.wheelMode === 'group';
       html += `<section class="card wheel-card">
-        <h3>🎡 Het rad</h3>
+        <h3>Het rad</h3>
         <p class="mut small">${group ? 'Eén draai geldt voor de hele groep.' : 'Iedereen draait zelf voor z\'n eigen drankje.'}</p>
         ${opts.length ? `<div class="wheel-box"><div class="pointer"></div>${wheelSvg(opts, rot)}</div>` : '<div class="empty">Dit rad heeft nog geen drankjes.</div>'}
         ${sp
@@ -946,18 +1005,18 @@
     const cur = currentHoleId();
     const missing = list.filter((h) => h.addr && !hasGeo(h)).length;
     let html = `<div id="map-slot" class="map-slot"></div>
-      <div class="btnrow"><button class="btn ghost" data-act="locate">📍 Waar ben ik?</button><button class="btn ghost" data-act="map-fit">Hele route</button></div>`;
+      <div class="btnrow"><button class="btn ghost" data-act="locate">${ico('pin')} Waar ben ik?</button><button class="btn ghost" data-act="map-fit">Hele route</button></div>`;
     if (missing) {
       html += `<p class="mut small center">${missing === 1 ? 'Eén kroeg staat' : missing + ' kroegen staan'} nog niet op de kaart.
         ${geoBusy ? 'Adressen opzoeken…' : '<button class="linkbtn" data-act="geo-all">Adressen opzoeken</button>'}</p>`;
     }
-    html += '<section class="card"><h3>🗺️ Route in volgorde</h3><div class="route">';
+    html += '<section class="card"><h3>Route in volgorde</h3><div class="route">';
     if (!list.length) html += '<p class="mut">Nog geen kroegen.</p>';
     list.forEach((h, i) => {
       html += `<div class="rt ${h.id === cur ? 'cur' : ''}">
         <button class="rt-main" data-act="open-hole" data-id="${h.id}"><span class="rt-no">${i + 1}</span>
           <span class="pn"><b>${esc(h.name || 'Hole ' + (i + 1))}</b><small>${esc(h.addr || 'geen adres')}</small></span></button>
-        <a class="mini" href="${esc(navUrl(h))}" target="_blank" rel="noopener" aria-label="Navigeer naar ${esc(h.name || '')}">🧭</a></div>`;
+        <a class="mini" href="${esc(navUrl(h))}" target="_blank" rel="noopener" aria-label="Navigeer naar ${esc(h.name || '')}">${ico('nav')}</a></div>`;
     });
     html += '</div></section>';
     return html;
@@ -968,13 +1027,24 @@
     if (!rows.length) return '<div class="empty">Nog geen spelers.</div>';
     const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
     const nHoles = holesList().length;
-    let html = '<div class="board">';
-    rows.forEach((r) => {
-      html += `<div class="brow ${r.p.id === S.me ? 'me' : ''} ${r.rank === 1 ? 'lead' : ''}">
-        <div class="rank">${r.rank ? (medals[r.rank] || r.rank) : '–'}</div>
+    const started = rows.filter((r) => r.n > 0);
+    const pod = started.length >= 3 ? started.slice(0, 3) : [];
+    let html = '';
+    if (pod.length) {
+      html += `<div class="podium">${[pod[1], pod[0], pod[2]].map((r) => `<div class="pod p${pod.indexOf(r) + 1} ${r.p.id === S.me ? 'me' : ''}" data-flip="${r.p.id}">
+        <div class="pod-av">${esc(r.p.emoji || '🍺')}</div>
+        <b class="pod-name">${esc(r.p.name)}</b>
+        <span class="rel big ${relCls(r.rel)}">${fmtRel(r.rel)}</span>
+        <small>${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 3)) : ''}</small>
+        <div class="pod-step">${r.rank}</div></div>`).join('')}</div>`;
+    }
+    html += '<div class="board">';
+    rows.filter((r) => !pod.includes(r)).forEach((r) => {
+      html += `<div class="brow ${r.p.id === S.me ? 'me' : ''} ${r.rank === 1 ? 'lead' : ''}" data-flip="${r.p.id}">
+        <div class="rank">${r.rank ? (!pod.length && medals[r.rank]) || r.rank : '–'}</div>
         <div class="av big">${esc(r.p.emoji || '🍺')}</div>
         <div class="bmain"><b>${esc(r.p.name)}</b>
-          <small>${r.n ? `${r.str} ${r.str === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
+          <small>${r.n ? `${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
         <div class="rel huge ${r.n ? relCls(r.rel) : 'par'}">${r.n ? fmtRel(r.rel) : '–'}</div>
       </div>`;
     });
@@ -1030,17 +1100,17 @@
     const link = shareUrl();
     let html = '';
     if (LOCAL) {
-      html += `<section class="card"><h3>📱 Lokaal spel</h3>
+      html += `<section class="card"><h3>Lokaal spel</h3>
         <p class="mut">Dit spel staat alleen op dit toestel. Voeg hieronder spelers toe en vul alle scores hier in, of koppel een database zodat iedereen op z'n eigen telefoon meedoet.</p>
         <button class="btn ghost" data-act="change-db">Database koppelen</button></section>`;
     } else {
-      html += `<section class="card invite"><h3>📲 Nodig iedereen uit</h3>
+      html += `<section class="card invite"><h3>Nodig iedereen uit</h3>
         <p class="mut small">Laat de QR-code scannen of deel de link in de groepsapp.</p>
         <div class="qr">${qrSvg(link)}</div>
         <div class="link">${esc(link)}</div>
         <div class="btnrow"><button class="btn" data-act="share">Deel link</button><button class="btn ghost" data-act="copy">Kopieer</button></div></section>`;
     }
-    html += `<section class="card"><h3>📜 Spelregels</h3>
+    html += `<section class="card"><h3>Spelregels</h3>
       <ul class="rules">
         <li>Elke kroeg is een hole met een drankje en een <b>par</b>: het aantal teugen waarin je het glas leeg hoort te hebben.</li>
         <li>Tel je <b>teugen</b>. In één keer achterover is een <b>hole-in-one</b>.</li>
@@ -1050,7 +1120,7 @@
         ${penList().length ? `<li>Strafslagen: ${penList().map((p) => esc(p.l) + ' +' + (+p.n || 1)).join(', ')}.</li>` : ''}
         <li>Laagste totaalscore wint. Fris of 0.0 telt net zo goed.</li>
       </ul></section>`;
-    html += `<section class="card"><h3>🙋 Jij</h3>`;
+    html += `<section class="card"><h3>Jij</h3>`;
     if (me) {
       html += `<div class="prow"><span class="av big">${esc(me.emoji || '🍺')}</span><span class="pn"><b>${esc(me.name)}</b><small>speler</small></span></div>
         <div class="btnrow"><button class="btn ghost" data-act="profile">Profiel wijzigen</button><button class="btn ghost" data-act="logout">Wissel speler</button></div>`;
@@ -1058,12 +1128,12 @@
       html += '<p class="mut">Je kijkt alleen mee.</p><button class="btn" data-act="logout">Meedoen</button>';
     }
     html += '</section>';
-    html += '<section class="card"><h3>🛠️ Organisator</h3>';
+    html += '<section class="card"><h3>Organisator</h3>';
     if (isOrg()) {
       html += `<p class="mut small">Je kunt kroegen aanpassen (tabblad Holes), scores van iedereen invullen en de actieve hole kiezen.</p>
         <div class="stack">
           <button class="btn ghost" data-act="settings">Spelinstellingen en strafslagen</button>
-          <button class="btn ghost" data-act="wheel-edit">🎡 Het rad instellen</button>
+          <button class="btn ghost" data-act="wheel-edit">Het rad instellen</button>
           <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
           <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
@@ -1077,7 +1147,7 @@
     }
     html += '</section>';
     const st = statusInfo();
-    html += `<section class="card"><h3>📡 Verbinding</h3>
+    html += `<section class="card"><h3>Verbinding</h3>
       <p class="mut small">${LOCAL ? 'Lokaal spel, alles blijft op dit toestel.' : `Status: <b>${st.txt}</b>${S.err ? ' · ' + esc(S.err) : ''}. Scores die je zonder bereik invult worden bewaard en verstuurd zodra er weer verbinding is.`}</p>
       <div class="btnrow"><button class="btn ghost" data-act="reload">Ververs</button>${LOCAL || CFG_DB ? '' : '<button class="btn ghost" data-act="change-db">Andere database</button>'}</div>
       <p class="mut tiny">Spel: ${esc(GAME)}</p></section>`;
@@ -1088,7 +1158,7 @@
     const hole = ui.hole ? holeById(ui.hole) : null;
     if (ui.hole && !hole) ui.hole = null;
     const st = statusInfo();
-    const tabs = [['holes', '⛳', 'Holes'], ['map', '🗺️', 'Kaart'], ['board', '🏆', 'Stand'], ['card', '📋', 'Scores'], ['more', '☰', 'Meer']];
+    const tabs = [['holes', 'flag', 'Holes'], ['map', 'map', 'Kaart'], ['board', 'trophy', 'Stand'], ['card', 'grid', 'Scores'], ['more', 'more', 'Meer']];
     let body;
     if (hole) body = viewHole(hole);
     else if (ui.tab === 'map') body = viewMap();
@@ -1096,10 +1166,11 @@
     else if (ui.tab === 'card') body = viewCard();
     else if (ui.tab === 'more') body = viewMore();
     else body = viewHoles();
-    return `<header class="top"><div class="brand"><span>⛳</span><b>${esc(title())}</b></div>
+    return `<header class="top"><div class="brand"><span class="brand-mark">${ico('flag')}</span><b>${esc(title())}</b></div>
         <button class="status ${st.cls}" data-act="status"><i></i>${st.txt}</button></header>
       <main class="view ${hole ? 'v-hole' : 'v-' + ui.tab}">${body}</main>
-      <nav class="tabs">${tabs.map((t) => `<button class="${!hole && ui.tab === t[0] ? 'on' : ''}" data-act="tab" data-tab="${t[0]}"><span>${t[1]}</span>${t[2]}</button>`).join('')}</nav>`;
+      <div class="tabfade"></div>
+      <nav class="tabs">${tabs.map((t) => `<button class="${!hole && ui.tab === t[0] ? 'on' : ''}" data-act="tab" data-tab="${t[0]}">${ico(t[1])}<span>${t[2]}</span></button>`).join('')}</nav>`;
   }
 
   // ------------------------------------------------------------ render
@@ -1130,19 +1201,57 @@
     // Op het kaart-tabblad alleen de punten bijwerken, zodat de kaart niet verspringt terwijl je sleept.
     if (!force && key === 'tab:map' && lastKey === key && map && mapEl && mapEl.isConnected) { syncMap(); paintStatus(); return; }
     const html = key === 'setup' ? viewSetup() : key === 'loading' ? viewLoading() : key === 'create' ? viewCreate() : key === 'join' ? viewJoin() : viewMain();
+    const fresh = key !== lastKey;
 
     const keep = {};
     app.querySelectorAll('input[id],textarea[id]').forEach((el) => { keep[el.id] = el.value; });
     const focusId = typing && ae.id ? ae.id : null;
-    if (key !== lastKey) ui.scroll[lastKey] = window.scrollY;
+    // Posities onthouden zodat rijen in de stand naar hun nieuwe plek kunnen schuiven.
+    const was = {};
+    if (!fresh) app.querySelectorAll('[data-flip]').forEach((el) => { was[el.dataset.flip] = el.getBoundingClientRect(); });
+    if (fresh) ui.scroll[lastKey] = window.scrollY;
     app.innerHTML = html;
     for (const id in keep) { const el = document.getElementById(id); if (el) el.value = keep[id]; }
     if (focusId) { const el = document.getElementById(focusId); if (el) el.focus({ preventScroll: true }); }
     if (key === 'tab:map') mountMap();
-    if (key !== lastKey) {
+    document.body.classList.toggle('start', !key.startsWith('tab:') && !key.startsWith('hole:'));
+    if (fresh) {
+      const view = app.querySelector('.view, .center-screen');
+      if (view) view.classList.add('enter');
       window.scrollTo(0, key.startsWith('tab:') ? ui.scroll[key] || 0 : 0);
       lastKey = key;
+    } else {
+      app.querySelectorAll('[data-flip]').forEach((el) => {
+        const from = was[el.dataset.flip];
+        if (!from) return;
+        const to = el.getBoundingClientRect();
+        const dx = from.left - to.left, dy = from.top - to.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        el.style.transition = 'none';
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        el.style.zIndex = 2;
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1)';
+          el.style.transform = '';
+          setTimeout(() => { el.style.zIndex = ''; el.style.transition = ''; }, 600);
+        });
+      });
     }
+    // De ring van de teller loopt vloeiend van de vorige stand naar de nieuwe.
+    const ring = app.querySelector('.ring-fg');
+    if (ring) {
+      const to = ring.getAttribute('stroke-dashoffset');
+      const id = ui.hole + '/' + targetPid();
+      if (ui.ring && ui.ring.id === id && ui.ring.v !== to) {
+        ring.style.transition = 'none';
+        ring.style.strokeDashoffset = ui.ring.v;
+        void ring.getBoundingClientRect();
+        ring.style.transition = '';
+        ring.style.strokeDashoffset = to;
+      }
+      ui.ring = { id, v: to };
+    }
+    if (ui.bump) { ui.bump = false; const tap = app.querySelector('.tap'); if (tap) tap.classList.add('pop'); }
     document.title = title();
   }
   document.addEventListener('focusout', () => { if (dirty) setTimeout(render, 80); });
@@ -1282,7 +1391,7 @@
   function sheetWheel() {
     const opts = gameWheel();
     const used = holesList().filter((h) => h.type === 'wheel' && !ownWheel(h).length).map((h) => h.name);
-    openSheet(`<h2>🎡 Het rad</h2>
+    openSheet(`<h2>Het rad</h2>
       <p class="mut small">Zet het rad klaar voordat jullie beginnen. Het geldt voor elke kroeg waar je bij het drankje voor "Rad" kiest.
         ${used.length ? 'Nu in gebruik bij: ' + esc(used.join(', ')) + '.' : 'Nog bij geen enkele kroeg in gebruik: kies bij een kroeg "Rad" als drankje.'}</p>
       <div class="wheel-box small" id="w-prev">${wheelPreview(opts)}</div>
@@ -1454,9 +1563,10 @@
     'sip'(el) {
       const sc = scoreOf(targetPid(), ui.hole) || {};
       buzz(12);
+      ui.bump = true;
       putScore({ sips: clamp((+sc.sips || 0) + +el.dataset.d, 0, 99), dnf: false });
     },
-    'sip-set'(el) { buzz(12); putScore({ sips: +el.dataset.n, dnf: false }); },
+    'sip-set'(el) { buzz(12); ui.bump = true; putScore({ sips: +el.dataset.n, dnf: false }); },
     'dnf'() { const sc = scoreOf(targetPid(), ui.hole) || {}; putScore({ dnf: !sc.dnf }); },
     'task'(el) { putScore({ task: el.dataset.v === 'w' ? 'w' : 'l' }); },
     'pen-add'(el) {
@@ -1492,10 +1602,11 @@
       if (first) {
         const info = holeInfo(h, pid);
         const saved = scoreOf(pid, h.id);
-        const term = termFor(saved, strokesOf(saved, info.par, h), info.par, h);
+        const st = strokesOf(saved, info.par, h);
+        const term = termFor(saved, st, info.par, h);
         buzz(term.cls === 'hio' ? [60, 40, 60, 40, 160] : 30);
         if (term.cls === 'hio') confetti(['🎯', '⛳', '🏆', '✨']); else if (term.cls === 'good') confetti();
-        toast(term.t + ' genoteerd', term.cls === 'hio' ? 'gold' : '');
+        splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
       }
       render(true);
     },

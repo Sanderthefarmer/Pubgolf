@@ -167,7 +167,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await shot(a, '15-hole-org', true);
   await fits(a, 'hole organisator');
   await b.click('[data-act="tab"][data-tab="board"]');
-  await b.waitForFunction(() => document.querySelectorAll('.brow').length === 3, null, { timeout: 5000 }).then(() => ok(true, 'B ziet 3 spelers')).catch(() => ok(false, 'B ziet 3 spelers'));
+  await b.waitForFunction(() => document.querySelectorAll('[data-flip]').length === 3, null, { timeout: 5000 }).then(() => ok(true, 'B ziet 3 spelers')).catch(() => ok(false, 'B ziet 3 spelers'));
 
   // 9. offline wachtrij
   await B.ctx.setOffline(true);
@@ -396,10 +396,10 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   // 21. nieuw spel met eigen kroegen
   await a.click('[data-act="tab"][data-tab="more"]');
   await a.click('[data-act="new-game"]');
-  await a.fill('#n-game', 'Feest Twee');
+  await a.fill('#n-game', 'Feest ' + G);
   await a.click('[data-act="new-game-go"]');
   await a.waitForSelector('#c-route');
-  ok(a.url().includes('g=feest-twee'), 'nieuw spel krijgt eigen link');
+  ok(a.url().includes('g=feest-' + G), 'nieuw spel krijgt eigen link');
   await a.click('#c-route [data-v="empty"]');
   await a.fill('#in-pin', '1111');
   await a.click('[data-act="create-game"]');
