@@ -9,7 +9,7 @@
 //       of met een spelcode kan meedoen. Vul je hier een spelcode in, dan opent de
 //       link altijd direct dat ene spel.
 window.PUBGOLF_CONFIG = {
-  db: '',
+  db: 'https://pubgolf-11b08-default-rtdb.europe-west1.firebasedatabase.app',
   game: '',
   editMinutes: 2
 };
