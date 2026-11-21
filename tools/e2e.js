@@ -365,6 +365,34 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.waitForFunction(() => document.querySelectorAll('#map .pin').length === 13, null, { timeout: 5000 }).then(() => ok(true, 'onbekend adres verdwijnt van de kaart')).catch(() => ok(false, 'onbekend adres verdwijnt van de kaart'));
   ok((await a.textContent('.v-map')).includes('nog niet op de kaart'), 'melding over ontbrekend adres');
 
+  // 20b. het rad van het spel vooraf instellen; een kroeg kan een eigen rad krijgen
+  await a.click('[data-act="tab"][data-tab="more"]');
+  await a.click('[data-act="wheel-edit"]');
+  await a.waitForSelector('#w-opts');
+  ok((await a.textContent('.sheet')).includes('in gebruik bij'), 'rad-scherm toont bij welke kroegen het geldt');
+  await a.fill('#w-opts', 'Cola, 1\nWater, 2\nSpa rood, 3');
+  await sleep(150);
+  ok(await a.locator('#w-prev svg.wheel path').count() === 3, 'voorbeeld van het rad werkt live bij');
+  await shot(a, '25-rad-instellen', true);
+  await a.click('[data-act="wheel-save"]');
+  await sleep(500);
+  await a.click('[data-act="tab"][data-tab="holes"]');
+  await a.click('.hole >> nth=2');
+  await a.waitForSelector('.wheel-legend');
+  ok((await a.textContent('.wheel-legend')).includes('Cola') && !(await a.textContent('.wheel-legend')).includes('Wijn'), 'kroeg met rad gebruikt het rad van het spel');
+  await a.click('.hero [data-act="hole-edit"]');
+  await a.waitForSelector('#h-wsrc');
+  ok(!(await a.isVisible('#h-opts')), 'bij "rad van het spel" geen eigen lijst');
+  await a.click('#h-wsrc [data-v="own"]');
+  await a.fill('#h-opts', 'Thee, 1\nKoffie, 2');
+  await a.click('[data-act="hole-save"]');
+  await sleep(500);
+  ok((await a.textContent('.wheel-legend')).includes('Thee') && !(await a.textContent('.wheel-legend')).includes('Cola'), 'eigen rad van de kroeg gaat voor');
+  await a.click('[data-act="spin"]');
+  await a.waitForSelector('.spin-result', { timeout: 9000 });
+  ok(/Thee|Koffie/.test(await a.textContent('.spin-result b')), 'draai komt van het eigen rad');
+  await sleep(2600);
+
   // 21. nieuw spel met eigen kroegen
   await a.click('[data-act="tab"][data-tab="more"]');
   await a.click('[data-act="new-game"]');

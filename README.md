@@ -3,6 +3,7 @@
 Scorekaart-webapp voor een pubgolf: iedereen opent de link op z'n eigen telefoon, vult een naam in en telt per hole z'n teugen. De stand werkt live bij.
 
 - **Kroegen per spel instelbaar**: naam, adres, een vast drankje met par of een **rad** dat je drankje en par bepaalt (ieder draait zelf, of één draai voor de groep).
+- **Het rad zet je vooraf klaar** voor het hele spel (Meer → Het rad instellen); een kroeg kan ook een eigen rad krijgen.
 - **Opdracht per kroeg**, zoals Split the G bij The Dublin House: gelukt gaat van je score af, mislukt komt erbij. Per kroeg kun je ook eigen **straffen** instellen.
 - **Teugen tellen** met een grote +1-knop; in één keer leeg is een hole-in-one. Strafslagen en "niet opgedronken" tellen mee.
 - **Kaart** met de route in volgorde, genummerde punten, je eigen locatie en een navigatieknop per kroeg.

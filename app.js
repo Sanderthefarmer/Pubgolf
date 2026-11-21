@@ -320,7 +320,7 @@
           const hole = S.data.holes[hid];
           if (hid === ui.hole && hole && key === spinKey(hole, targetPid())) {
             const sp = S.data.spins[hid][key];
-            const n = (hole.options || []).length;
+            const n = wheelOpts(hole).length;
             if (sp && n && $('.wheel')) { snap = next; persist(); playSpin(sp.i, n, k); return; }
           }
         }
@@ -362,7 +362,13 @@
   const meP = () => (S.me && S.data.players[S.me] ? S.me : null);
   const targetPid = () => (isOrg() && ui.pid && S.data.players[ui.pid] ? ui.pid : meP());
   const scoreOf = (pid, hid) => (pid && S.data.scores[pid] && S.data.scores[pid][hid]) || null;
-  const wheelOpts = (hole) => (Array.isArray(hole.options) ? hole.options.filter((o) => o && o.label) : []);
+  // Het rad van het spel wordt vooraf ingesteld en geldt voor elke kroeg met een rad, tenzij die kroeg een eigen rad heeft.
+  const gameWheel = () => {
+    const w = S.data.meta && Array.isArray(S.data.meta.wheel) ? S.data.meta.wheel.filter((o) => o && o.label) : [];
+    return w.length ? w : DEFAULT_WHEEL;
+  };
+  const ownWheel = (hole) => (hole && Array.isArray(hole.options) ? hole.options.filter((o) => o && o.label) : []);
+  const wheelOpts = (hole) => { const own = ownWheel(hole); return own.length ? own : gameWheel(); };
   const spinKey = (hole, pid) => (hole.wheelMode === 'group' ? '_group' : pid);
   function spinOf(hole, pid) {
     const row = S.data.spins[hole.id] || {};
@@ -1057,6 +1063,7 @@
       html += `<p class="mut small">Je kunt kroegen aanpassen (tabblad Holes), scores van iedereen invullen en de actieve hole kiezen.</p>
         <div class="stack">
           <button class="btn ghost" data-act="settings">Spelinstellingen en strafslagen</button>
+          <button class="btn ghost" data-act="wheel-edit">🎡 Het rad instellen</button>
           <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
           <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
@@ -1177,8 +1184,9 @@
 
   function sheetHole(id) {
     const h = id ? holeById(id) : null;
-    const d = h || { name: '', addr: '', type: 'fixed', drink: '', par: 3, wheelMode: 'player', options: DEFAULT_WHEEL, note: '' };
-    const opts = (Array.isArray(d.options) && d.options.length ? d.options : DEFAULT_WHEEL).filter(Boolean);
+    const d = h || { name: '', addr: '', type: 'fixed', drink: '', par: 3, wheelMode: 'player', note: '' };
+    const own = ownWheel(d);
+    const opts = own.length ? own : gameWheel();
     openSheet(`<h2>${h ? 'Kroeg bewerken' : 'Nieuwe kroeg'}</h2>
       <label class="field"><span>Kroeg</span><input id="h-name" type="text" maxlength="40" value="${esc(d.name)}" placeholder="Naam van de kroeg"></label>
       <label class="field"><span>Adres (voor de kaart)</span><input id="h-addr" type="text" maxlength="80" value="${esc(d.addr || '')}" placeholder="bijv. Melkmarkt 37"></label>
@@ -1194,7 +1202,11 @@
         <div class="seg" id="h-mode" data-v="${d.wheelMode === 'group' ? 'group' : 'player'}">
           <button data-act="seg" data-v="player" class="${d.wheelMode === 'group' ? '' : 'on'}">Ieder draait zelf</button>
           <button data-act="seg" data-v="group" class="${d.wheelMode === 'group' ? 'on' : ''}">Eén draai voor de groep</button></div>
-        <label class="field"><span>Drankjes op het rad — één per regel, met de par achter een komma</span>
+        <div class="seg" id="h-wsrc" data-v="${own.length ? 'own' : 'game'}">
+          <button data-act="seg" data-v="game" class="${own.length ? '' : 'on'}">Rad van het spel</button>
+          <button data-act="seg" data-v="own" class="${own.length ? 'on' : ''}">Eigen rad voor deze kroeg</button></div>
+        <p class="mut small when-game">Op het rad van het spel staat nu: ${gameWheel().map((o) => esc(o.label) + ' (par ' + (+o.par || 1) + ')').join(', ')}. Aanpassen kan via Meer → Het rad instellen.</p>
+        <label class="field when-own"><span>Drankjes op het rad — één per regel, met de par achter een komma</span>
           <textarea id="h-opts" rows="6" spellcheck="false">${esc(opts.map((o) => o.label + ', ' + (+o.par || 1)).join('\n'))}</textarea></label>
       </div>
       <h4>Opdracht (optioneel)</h4>
@@ -1217,6 +1229,8 @@
     const t = $('#h-type');
     const sheet = $('.sheet');
     if (t && sheet) sheet.dataset.type = t.dataset.v;
+    const w = $('#h-wsrc');
+    if (w && sheet) sheet.dataset.wsrc = w.dataset.v;
   }
   function sheetSettings() {
     const m = S.data.meta || {};
@@ -1263,6 +1277,20 @@
       <button class="btn big" data-act="org-check">Ontgrendel</button>
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
     setTimeout(() => { const el = $('#o-pin'); if (el) el.focus(); }, 50);
+  }
+  const wheelPreview = (opts) => (opts.length >= 2 ? '<div class="pointer"></div>' + wheelSvg(opts, 0) : '<div class="empty">Zet minstens twee drankjes op het rad.</div>');
+  function sheetWheel() {
+    const opts = gameWheel();
+    const used = holesList().filter((h) => h.type === 'wheel' && !ownWheel(h).length).map((h) => h.name);
+    openSheet(`<h2>🎡 Het rad</h2>
+      <p class="mut small">Zet het rad klaar voordat jullie beginnen. Het geldt voor elke kroeg waar je bij het drankje voor "Rad" kiest.
+        ${used.length ? 'Nu in gebruik bij: ' + esc(used.join(', ')) + '.' : 'Nog bij geen enkele kroeg in gebruik: kies bij een kroeg "Rad" als drankje.'}</p>
+      <div class="wheel-box small" id="w-prev">${wheelPreview(opts)}</div>
+      <label class="field"><span>Eén drankje per regel, met de par (aantal teugen) achter een komma</span>
+        <textarea id="w-opts" rows="7" spellcheck="false">${esc(opts.map((o) => o.label + ', ' + (+o.par || 1)).join('\n'))}</textarea></label>
+      <p id="w-msg" class="msg"></p>
+      <button class="btn big" data-act="wheel-save">Opslaan</button>
+      <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
   }
   function sheetNewGame() {
     openSheet(`<h2>Nieuw spel</h2>
@@ -1355,7 +1383,7 @@
       const pin = val('in-pin');
       if (!LOCAL && pin.length < 3) { msg('create-msg', 'Kies een pincode van minstens 3 tekens.'); return; }
       const zwolle = ui.route !== 'empty';
-      const meta = { title: t.slice(0, 40), pin: pin ? hashStr('pg:' + pin) : '', dnf: 3, pens: DEFAULT_PENS, created: now() };
+      const meta = { title: t.slice(0, 40), pin: pin ? hashStr('pg:' + pin) : '', dnf: 3, pens: DEFAULT_PENS, wheel: DEFAULT_WHEEL, created: now() };
       if (zwolle) meta.city = ROUTE_CITY;
       write('meta', meta);
       if (zwolle) write('holes', seedHoles(ROUTE_ZWOLLE));
@@ -1499,8 +1527,10 @@
       const doc = { name: val('h-name').slice(0, 40) || 'Kroeg', type, order: +prev.order || Math.max(0, ...holesList().map((x) => +x.order || 0)) + 1 };
       if (type === 'wheel') {
         doc.wheelMode = $('#h-mode').dataset.v === 'group' ? 'group' : 'player';
-        doc.options = parseOptions(val('h-opts'));
-        if (doc.options.length < 2) { msg('h-msg', 'Zet minstens twee drankjes op het rad.'); return; }
+        if ($('#h-wsrc').dataset.v === 'own') {
+          doc.options = parseOptions(val('h-opts'));
+          if (doc.options.length < 2) { msg('h-msg', 'Zet minstens twee drankjes op het rad.'); return; }
+        }
       } else {
         doc.drink = val('h-drink').slice(0, 30) || 'Drankje';
         doc.par = clamp(Math.round(+val('h-par')) || 1, 1, 20);
@@ -1602,6 +1632,14 @@
       toast('Route Zwolle geladen');
       geoFill(true);
     },
+    'wheel-edit'() { sheetWheel(); },
+    'wheel-save'() {
+      const opts = parseOptions(val('w-opts'));
+      if (opts.length < 2) { msg('w-msg', 'Zet minstens twee drankjes op het rad.'); return; }
+      write('meta/wheel', opts);
+      closeSheet();
+      toast('Rad opgeslagen');
+    },
     'new-game'() { sheetNewGame(); },
     'new-game-go'() {
       const g = cleanGame(val('n-game').replace(/\s+/g, '-'));
@@ -1662,6 +1700,11 @@
     const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'n-game': 'new-game-go' };
     const act = enter[ev.target.id];
     if (act) { ev.preventDefault(); const btn = $(`[data-act="${act}"]`); if (btn) btn.click(); }
+  });
+  document.addEventListener('input', (ev) => {
+    if (ev.target.id !== 'w-opts') return;
+    const box = $('#w-prev');
+    if (box) box.innerHTML = wheelPreview(parseOptions(ev.target.value));
   });
   window.addEventListener('popstate', (ev) => {
     const st = ev.state || {};

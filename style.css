@@ -94,6 +94,8 @@ input:focus, textarea:focus { border-color: var(--acc); }
 .seg button { flex: 1; min-height: 44px; border: 0; border-radius: 10px; background: transparent; font-weight: 700; font-size: 14px; color: var(--mut); }
 .seg button.on { background: var(--acc); color: var(--acc-ink); }
 .sheet[data-type='fixed'] .when-wheel, .sheet[data-type='wheel'] .when-fixed { display: none; }
+.sheet[data-wsrc='game'] .when-own, .sheet[data-wsrc='own'] .when-game { display: none; }
+.when-game { margin-top: 10px; }
 
 /* ---------- startschermen ---------- */
 .center-screen {
@@ -211,6 +213,7 @@ input:focus, textarea:focus { border-color: var(--acc); }
 /* overflow: een draaiend vierkant is breder dan het scherm en zou de pagina anders horizontaal laten schuiven */
 .wheel-card { text-align: center; overflow: hidden; }
 .wheel-box { position: relative; width: min(78vw, 320px); margin: 14px auto 16px; }
+.wheel-box.small { width: min(62vw, 240px); margin: 22px auto 6px; }
 .wheel { display: block; width: 100%; height: auto; border-radius: 50%; box-shadow: 0 0 0 6px #0a1a13, 0 0 0 9px var(--acc), 0 18px 40px rgba(0, 0, 0, 0.5); will-change: transform; }
 .pointer {
   position: absolute; left: 50%; top: -14px; z-index: 2; transform: translateX(-50%);
