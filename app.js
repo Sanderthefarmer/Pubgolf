@@ -123,7 +123,7 @@
   // ------------------------------------------------------------ store
   function norm(d) {
     d = d && typeof d === 'object' ? d : {};
-    return { meta: d.meta || null, holes: d.holes || {}, players: d.players || {}, scores: d.scores || {}, spins: d.spins || {} };
+    return { meta: d.meta || null, holes: d.holes || {}, players: d.players || {}, teams: d.teams || {}, scores: d.scores || {}, spins: d.spins || {}, na: d.na || {} };
   }
   const S = {
     data: norm(LS.get(NS + 'data', null)),
@@ -136,7 +136,7 @@
     spectator: !!LS.get(NS + 'spec', false)
   };
   const ui = {
-    tab: 'holes', hole: (history.state && history.state.hole) || null, pid: null, editing: false,
+    tab: 'holes', hole: (history.state && history.state.hole) || null, uid: null, editing: false,
     editHoles: false, spinning: false, route: 'zwolle', joinEmoji: EMOJIS[randInt(EMOJIS.length)], wheelRot: {}, scroll: {}
   };
 
@@ -312,15 +312,16 @@
 
   // Meldingen over scores van anderen en binnenkomende rad-uitslagen
   function snapshot() {
-    const m = { sc: {}, sp: {} };
-    for (const pid in S.data.scores) {
-      const row = S.data.scores[pid] || {};
-      for (const hid in row) m.sc[pid + '/' + hid] = row[hid] && row[hid].done ? 1 : 0;
+    const m = { sc: {}, sp: {}, na: {} };
+    for (const u in S.data.scores) {
+      const row = S.data.scores[u] || {};
+      for (const hid in row) m.sc[u + '/' + hid] = row[hid] && row[hid].done ? 1 : 0;
     }
     for (const hid in S.data.spins) {
       const row = S.data.spins[hid] || {};
       for (const key in row) m.sp[hid + '/' + key] = (row[key] && row[key].t) || 1;
     }
+    for (const hid in S.data.na) for (const id in S.data.na[hid] || {}) m.na[hid + '/' + id] = 1;
     return m;
   }
   let snap = snapshot(), announce = false;
@@ -330,13 +331,20 @@
       const fresh = [];
       for (const k in next.sc) if (next.sc[k] && !snap.sc[k]) fresh.push(k);
       if (fresh.length <= 3) fresh.forEach(announceScore);
+      for (const k in next.na) {
+        if (snap.na[k]) continue;
+        const [hid, id] = k.split('/');
+        const x = (S.data.na[hid] || {})[id];
+        const hole = S.data.holes[hid];
+        if (x && hole && x.by !== S.me) toast(`${(S.data.players[x.by] || {}).name || 'De organisator'} meldt: ${x.l} is er niet bij ${hole.name || 'deze kroeg'}`);
+      }
       for (const k in next.sp) {
         if (next.sp[k] !== snap.sp[k] && !ui.spinning && ui.hole) {
           const [hid, key] = k.split('/');
-          const hole = S.data.holes[hid];
-          if (hid === ui.hole && hole && key === spinKey(hole, targetPid())) {
+          const hole = holeById(hid);
+          if (hid === ui.hole && hole && key === spinKey(hole, targetUnit())) {
             const sp = S.data.spins[hid][key];
-            const n = wheelOpts(hole).length;
+            const n = spinOpts(sp, hole).length;
             if (sp && n && $('.wheel')) { snap = next; persist(); playSpin(sp.i, n, k); return; }
           }
         }
@@ -349,35 +357,84 @@
     paintStatus();
   }
   function announceScore(k) {
-    const [pid, hid] = k.split('/');
-    if (pid === S.me) return;
-    const p = S.data.players[pid];
+    const [uidKey, hid] = k.split('/');
+    const u = unitById(uidKey);
     const hole = holeById(hid);
-    if (!p || !hole) return;
-    const sc = scoreOf(pid, hid);
-    const info = holeInfo(hole, pid);
+    if (!u || !hole) return;
+    const sc = scoreOf(uidKey, hid);
+    const own = uidKey === myUnit();
+    if (sc && sc.skip) { if (!own) toast(`${u.emoji} ${u.name} slaat hole ${holeNo(hid)} over`); return; }
+    const info = holeInfo(hole, uidKey);
     const st = strokesOf(sc, info.par, hole);
     if (st == null) return;
     const term = termFor(sc, st, info.par, hole);
-    toast(`${p.emoji || '🍺'} ${p.name}: ${term.t} op hole ${holeNo(hid)}`, term.cls === 'hio' ? 'gold' : '');
+    if (own) {
+      // Een teamgenoot (of de organisator) sloeg de hole van mijn team op: ik krijg dezelfde uitslag in beeld.
+      if (term.cls === 'hio' || term.cls === 'good') confetti();
+      splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
+      return;
+    }
+    toast(`${u.emoji} ${u.name}: ${term.t} op hole ${holeNo(hid)}`, term.cls === 'hio' ? 'gold' : '');
   }
 
   // ------------------------------------------------------------ domein
   const title = () => (S.data.meta && S.data.meta.title) || 'Pubgolf';
   const dnfExtra = () => { const n = S.data.meta ? +S.data.meta.dnf : NaN; return Number.isFinite(n) ? n : 3; };
+  const soloSkips = () => { const n = S.data.meta ? +S.data.meta.soloSkips : NaN; return Number.isFinite(n) ? clamp(Math.round(n), 0, 20) : 4; };
+  const wheelOnce = () => !(S.data.meta && S.data.meta.wheelOnce === false);
   const penList = () => (S.data.meta && Array.isArray(S.data.meta.pens) ? S.data.meta.pens.filter(Boolean) : []);
   const isOrg = () => LOCAL || S.org;
   const holesList = () => Object.keys(S.data.holes).map((id) => Object.assign({ id }, S.data.holes[id]))
     .filter((h) => h && typeof h === 'object')
     .sort((a, b) => (+a.order || 0) - (+b.order || 0) || (a.id < b.id ? -1 : 1));
+  /** Kroegen die meetellen: een vervallen kroeg (dicht, te druk) blijft in de lijst staan maar telt niet. */
+  const liveHoles = () => holesList().filter((h) => !h.off);
   const holeById = (id) => (S.data.holes[id] ? Object.assign({ id }, S.data.holes[id]) : null);
   const holeNo = (id) => holesList().findIndex((h) => h.id === id) + 1;
   const playersList = () => Object.keys(S.data.players).map((id) => Object.assign({ id }, S.data.players[id]))
     .filter((p) => p && p.name)
     .sort((a, b) => (+a.t || 0) - (+b.t || 0) || (a.id < b.id ? -1 : 1));
   const meP = () => (S.me && S.data.players[S.me] ? S.me : null);
-  const targetPid = () => (isOrg() && ui.pid && S.data.players[ui.pid] ? ui.pid : meP());
-  const scoreOf = (pid, hid) => (pid && S.data.scores[pid] && S.data.scores[pid][hid]) || null;
+
+  // Teams. De score hoort bij een "eenheid": een team, of een speler zonder team (solo).
+  const teamsList = () => Object.keys(S.data.teams).map((id) => Object.assign({ id }, S.data.teams[id]))
+    .filter((t) => t && typeof t === 'object')
+    .sort((a, b) => (+a.t || 0) - (+b.t || 0) || (a.id < b.id ? -1 : 1));
+  const unitId = (pid) => { const p = pid && S.data.players[pid]; return p ? (p.team && S.data.teams[p.team] ? p.team : pid) : null; };
+  function unitsList() {
+    const players = playersList();
+    const out = [];
+    teamsList().forEach((t) => {
+      const members = players.filter((p) => p.team === t.id);
+      if (!members.length) return;
+      out.push({ id: t.id, team: true, members, name: t.name || members.map((p) => p.name).join(' & '), emoji: members.slice(0, 2).map((p) => p.emoji || '🍺').join('') });
+    });
+    players.filter((p) => !(p.team && S.data.teams[p.team])).forEach((p) => out.push({ id: p.id, team: false, members: [p], name: p.name, emoji: p.emoji || '🍺' }));
+    return out;
+  }
+  const unitById = (id) => (id && unitsList().find((u) => u.id === id)) || null;
+  const myUnit = () => unitId(meP());
+  const targetUnit = () => (isOrg() && ui.uid && unitById(ui.uid) ? ui.uid : myUnit());
+  const scoreOf = (u, hid) => (u && S.data.scores[u] && S.data.scores[u][hid]) || null;
+  /** Teugen van het hele team: elke speler telt z'n eigen teugen, de app telt ze op. */
+  function sipsOf(sc) {
+    let n = 0;
+    if (sc && sc.by && typeof sc.by === 'object') for (const k in sc.by) n += Math.max(0, +sc.by[k] || 0);
+    return n;
+  }
+  /** Onder welke naam de teugen van dit toestel geteld worden. */
+  const scoreKey = (u) => { const me = meP(); return me && unitId(me) === u ? me : 'org'; };
+
+  // Rechten. Spelers vullen alleen de score van hun eigen team in; een opgeslagen score gaat na een paar minuten op slot.
+  const EDIT_MIN = +CFG.editMinutes >= 0 ? +CFG.editMinutes : 2;
+  const canScore = (u) => !!u && (isOrg() || u === myUnit());
+  const locked = (sc) => !!(sc && sc.done) && !isOrg() && now() - (+sc.dt || 0) > EDIT_MIN * 60000;
+
+  // Solo spelen: wie alleen speelt terwijl anderen in teams zitten, mag een aantal holes overslaan.
+  const hasTeams = () => unitsList().some((u) => u.members.length > 1);
+  const skipsAllowed = (u) => { const x = unitById(u); return x && x.members.length === 1 && hasTeams() ? soloSkips() : 0; };
+  const skipsUsed = (u) => liveHoles().filter((h) => { const sc = scoreOf(u, h.id); return sc && sc.skip && sc.done; }).length;
+
   // Het rad van het spel wordt vooraf ingesteld en geldt voor elke kroeg met een rad, tenzij die kroeg een eigen rad heeft.
   const gameWheel = () => {
     const w = S.data.meta && Array.isArray(S.data.meta.wheel) ? S.data.meta.wheel.filter((o) => o && o.label) : [];
@@ -385,19 +442,45 @@
   };
   const ownWheel = (hole) => (hole && Array.isArray(hole.options) ? hole.options.filter((o) => o && o.label) : []);
   const wheelOpts = (hole) => { const own = ownWheel(hole); return own.length ? own : gameWheel(); };
-  const spinKey = (hole, pid) => (hole.wheelMode === 'group' ? '_group' : pid);
-  function spinOf(hole, pid) {
+  const spinKey = (hole, u) => (hole.wheelMode === 'group' ? '_group' : u);
+  function spinOf(hole, u) {
     const row = S.data.spins[hole.id] || {};
-    const key = spinKey(hole, pid);
+    const key = spinKey(hole, u);
     return (key && row[key]) || null;
   }
-  /** Drankje en par van een hole voor een speler (bij een rad hangt dat van de draai af). */
-  function holeInfo(hole, pid) {
+  /** De vakken zoals ze op het rad stonden toen er gedraaid werd. */
+  const spinOpts = (sp, hole) => (sp && Array.isArray(sp.o) && sp.o.filter(Boolean).length ? sp.o.filter(Boolean) : wheelOpts(hole));
+  const naList = (hid) => Object.keys(S.data.na[hid] || {}).map((id) => Object.assign({ id }, S.data.na[hid][id])).filter((x) => x && x.l);
+  /** Wat er nu nog op het rad staat: zonder wat hier niet verkrijgbaar is en zonder wat deze draaier al eerder trok. */
+  function wheelState(hole, u) {
+    const all = wheelOpts(hole);
+    const key = spinKey(hole, u);
+    const na = naList(hole.id).map((x) => x.l);
+    let used = [];
+    if (wheelOnce() && key) {
+      for (const hid in S.data.spins) {
+        if (hid === hole.id || !S.data.holes[hid]) continue;
+        const sp = (S.data.spins[hid] || {})[key];
+        if (sp && sp.label && all.some((o) => o.label === sp.label) && !used.includes(sp.label)) used.push(sp.label);
+      }
+    }
+    const avail = all.filter((o) => !na.includes(o.label));
+    let opts = avail.filter((o) => !used.includes(o.label));
+    let reset = false;
+    if (!opts.length && avail.length) { opts = avail; reset = true; used = []; }   // alles al gehad: het rad begint opnieuw
+    return { opts, na, used: used.filter((l) => !na.includes(l)), reset };
+  }
+  /** Drankje en par van een hole voor een team (bij een rad hangt dat van de draai af). */
+  function holeInfo(hole, u) {
     if (hole.type !== 'wheel') return { drink: hole.drink || 'Drankje', par: Math.max(1, +hole.par || 1) };
-    const sp = spinOf(hole, pid);
+    const sp = spinOf(hole, u);
     if (sp && sp.label) return { drink: sp.label, par: Math.max(1, +sp.par || 1), spin: sp };
-    const sc = scoreOf(pid, hole.id);
-    if (sc && sc.done && sc.par) return { drink: sc.drink || 'Rad', par: +sc.par };
+    const sc = scoreOf(u, hole.id);
+    if (sc && sc.done && sc.par && !sc.skip) return { drink: sc.drink || 'Rad', par: +sc.par };
+    if (sc && sc.done && sc.skip) {
+      const o = wheelOpts(hole);
+      return { drink: 'Het rad', par: Math.max(1, Math.round(o.reduce((a, x) => a + (+x.par || 1), 0) / Math.max(1, o.length))) };
+    }
     return { drink: null, par: null, needSpin: true };
   }
   const penTotal = (sc) => (sc && Array.isArray(sc.pens) ? sc.pens.reduce((a, p) => a + (p ? +p.n || 0 : 0), 0) : 0);
@@ -414,12 +497,14 @@
   }
   function strokesOf(sc, par, hole) {
     if (!sc || !sc.done || par == null) return null;
-    return (sc.dnf ? par + dnfExtra() : Math.max(1, +sc.sips || 1)) + penTotal(sc) + taskMod(hole, sc);
+    if (sc.skip) return par;   // een overgeslagen hole telt als par
+    return (sc.dnf ? par + dnfExtra() : Math.max(1, sipsOf(sc))) + penTotal(sc) + taskMod(hole, sc);
   }
   function termFor(sc, strokes, par, hole) {
     const d = strokes - par;
+    if (sc.skip) return { t: 'Overgeslagen', cls: 'par' };
     if (sc.dnf) return { t: 'Niet opgedronken', cls: 'bad' };
-    if (+sc.sips === 1 && par >= 2 && !penTotal(sc) && taskMod(hole, sc) <= 0) return { t: 'Hole-in-one! 🎯', cls: 'hio' };
+    if (sipsOf(sc) === 1 && par >= 2 && !penTotal(sc) && taskMod(hole, sc) <= 0) return { t: 'Hole-in-one! 🎯', cls: 'hio' };
     if (d <= -3) return { t: 'Albatros', cls: 'good' };
     if (d === -2) return { t: 'Eagle', cls: 'good' };
     if (d === -1) return { t: 'Birdie', cls: 'good' };
@@ -431,22 +516,23 @@
   }
   const fmtRel = (d) => (d === 0 ? 'Par' : d > 0 ? '+' + d : '−' + Math.abs(d));
   const relCls = (d) => (d < 0 ? 'good' : d > 0 ? 'bad' : 'par');
-  function totals(pid) {
-    const t = { str: 0, par: 0, n: 0, hio: 0 };
-    for (const h of holesList()) {
-      const sc = scoreOf(pid, h.id);
-      const info = holeInfo(h, pid);
+  function totals(u) {
+    const t = { str: 0, par: 0, n: 0, hio: 0, skips: 0 };
+    for (const h of liveHoles()) {
+      const sc = scoreOf(u, h.id);
+      const info = holeInfo(h, u);
       const st = strokesOf(sc, info.par, h);
       if (st == null) continue;
       t.str += st; t.par += info.par; t.n++;
-      if (!sc.dnf && +sc.sips === 1 && info.par >= 2) t.hio++;
+      if (sc.skip) t.skips++;
+      else if (!sc.dnf && sipsOf(sc) === 1 && info.par >= 2) t.hio++;
     }
     t.rel = t.str - t.par;
     return t;
   }
   function ranking() {
-    const rows = playersList().map((p) => Object.assign({ p }, totals(p.id)));
-    rows.sort((a, b) => (b.n > 0) - (a.n > 0) || a.rel - b.rel || b.n - a.n || a.str - b.str || (a.p.name < b.p.name ? -1 : 1));
+    const rows = unitsList().map((u) => Object.assign({ u }, totals(u.id)));
+    rows.sort((a, b) => (b.n > 0) - (a.n > 0) || a.rel - b.rel || b.n - a.n || b.hio - a.hio || a.str - b.str || (a.u.name < b.u.name ? -1 : 1));
     let rank = 0;
     rows.forEach((r, i) => {
       if (i === 0 || r.n === 0 || rows[i - 1].rel !== r.rel || rows[i - 1].n === 0) rank = i + 1;
@@ -456,10 +542,10 @@
   }
   function currentHoleId() {
     const cur = S.data.meta && S.data.meta.current;
-    if (cur && S.data.holes[cur]) return cur;
-    const pid = meP();
-    if (!pid) return null;
-    const next = holesList().find((h) => { const sc = scoreOf(pid, h.id); return !(sc && sc.done); });
+    if (cur && S.data.holes[cur] && !S.data.holes[cur].off) return cur;
+    const u = myUnit();
+    if (!u) return null;
+    const next = liveHoles().find((h) => { const sc = scoreOf(u, h.id); return !(sc && sc.done); });
     return next ? next.id : null;
   }
   function drinkIcon(name) {
@@ -575,13 +661,13 @@
     setTimeout(done, 4850);
   }
   async function doSpin(hole) {
-    if (ui.spinning) return;
-    const pid = targetPid();
-    const key = spinKey(hole, pid);
-    const opts = wheelOpts(hole);
-    if (!key || !opts.length) return;
-    if (spinOf(hole, pid)) { render(true); return; }
-    if (hole.wheelMode === 'group' && !LOCAL) {
+    if (ui.spinning || hole.off) return;
+    const u = targetUnit();
+    const group = hole.wheelMode === 'group';
+    const key = spinKey(hole, u);
+    if (!key || !(group ? meP() || isOrg() : canScore(u))) return;
+    if (spinOf(hole, u)) { render(true); return; }
+    if (group && !LOCAL) {
       // Iemand anders kan net gedraaid hebben: eerst de server vragen.
       ui.spinning = true;
       const box = $('.wheel-box');
@@ -594,14 +680,16 @@
           snap.sp[hole.id + '/_group'] = cur.t || 1;
           S.data = norm(setAt(S.data, 'spins/' + hole.id + '/_group', cur));
           persist();
-          playSpin(+cur.i || 0, opts.length, hole.id + '/_group');
+          playSpin(+cur.i || 0, spinOpts(cur, hole).length, hole.id + '/_group');
           return;
         }
       } catch (e) { /* offline: gewoon draaien */ }
       ui.spinning = false;
     }
+    const opts = wheelState(hole, u).opts;
+    if (!opts.length) { toast('Er staat niets meer op het rad. Vraag de organisator.'); return; }
     const i = randInt(opts.length);
-    const spin = { i, label: opts[i].label, par: Math.max(1, +opts[i].par || 1), t: now(), by: S.me || '' };
+    const spin = { i, label: opts[i].label, par: Math.max(1, +opts[i].par || 1), o: opts.map((o) => ({ label: o.label, par: Math.max(1, +o.par || 1) })), t: now(), by: S.me || '' };
     ui.spinning = true;
     write('spins/' + hole.id + '/' + key, spin);
     ui.spinning = false;
@@ -622,12 +710,12 @@
   function syncMap() {
     if (!map) return;
     const L = window.L;
-    const pid = meP();
+    const mine = myUnit();
     const cur = currentHoleId();
     const pts = mapPoints();
     const rows = pts.map((x) => {
-      const sc = scoreOf(pid, x.h.id);
-      return [x.h.id, x.i, +x.h.lat, +x.h.lng, x.h.name || '', x.h.addr || '', x.h.id === cur, !!(sc && sc.done), holeLine(x.h, pid)];
+      const sc = scoreOf(mine, x.h.id);
+      return [x.h.id, x.i, +x.h.lat, +x.h.lng, x.h.name || '', x.h.addr || '', x.h.id === cur, !!(sc && sc.done) && !x.h.off, x.h.off ? 'Vervalt' : holeLine(x.h, mine), !!x.h.off];
     });
     const sig = JSON.stringify(rows);
     if (sig === mapSig) return;
@@ -638,7 +726,7 @@
     }
     pts.forEach((x, k) => {
       const r = rows[k];
-      const icon = L.divIcon({ className: 'pin-wrap', html: `<div class="pin ${r[6] ? 'cur' : ''} ${r[7] ? 'done' : ''}">${r[1] + 1}</div>`, iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -14] });
+      const icon = L.divIcon({ className: 'pin-wrap', html: `<div class="pin ${r[6] ? 'cur' : ''} ${r[7] ? 'done' : ''} ${r[9] ? 'off' : ''}">${r[1] + 1}</div>`, iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -14] });
       L.marker([r[2], r[3]], { icon, zIndexOffset: r[6] ? 1000 : 0 })
         .bindPopup(`<b>${r[1] + 1}. ${esc(r[4])}</b>${r[5] ? '<br>' + esc(r[5]) : ''}<br>${r[8]}
           <div class="pop-btns"><button class="btn" data-hole="${r[0]}">Bekijk</button><a class="btn ghost" href="${esc(navUrl(x.h))}" target="_blank" rel="noopener">Navigeer</a></div>`, { closeButton: false, minWidth: 200 })
@@ -785,9 +873,11 @@
     return `<div class="center-screen join">
       <div class="logo">⛳</div>
       <h1>${esc(title())}</h1>
-      <p class="mut">Vul je naam in en kies een poppetje.</p>
+      <p class="mut">Vul je naam in${LOCAL ? '' : ', kies een pincode'} en kies een poppetje.</p>
       <label class="field"><span>Je naam</span>
         <input id="in-name" type="text" maxlength="20" autocomplete="given-name" autocapitalize="words" placeholder="Naam"></label>
+      ${LOCAL ? '' : `<label class="field"><span>Pincode van 4 cijfers, om later weer in te loggen</span>
+        <input id="in-ppin" type="text" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="bijv. 2468"></label>`}
       <div class="emoji-grid">${EMOJIS.map((e) => `<button class="emoji ${e === ui.joinEmoji ? 'on' : ''}" data-act="pick-emoji" data-e="${e}">${e}</button>`).join('')}</div>
       <button class="btn big" data-act="join">Meedoen</button>
       <p id="join-msg" class="msg"></p>
@@ -797,9 +887,9 @@
     </div>`;
   }
 
-  function holeLine(h, pid) {
+  function holeLine(h, u) {
     if (h.type === 'wheel') {
-      const info = holeInfo(h, pid);
+      const info = holeInfo(h, u);
       if (info.drink && !info.needSpin) return `🎡 ${esc(info.drink)} · par ${info.par}`;
       return '🎡 Rad bepaalt je drankje';
     }
@@ -807,25 +897,29 @@
   }
   function viewHoles() {
     const list = holesList();
-    const pid = meP();
+    const live = list.filter((h) => !h.off);
+    const mine = myUnit();
     const cur = currentHoleId();
-    const players = playersList();
+    const units = unitsList();
     let html = '';
-    if (pid) {
-      const t = totals(pid);
-      const mine = ranking().find((r) => r.p.id === pid);
+    if (mine) {
+      const t = totals(mine);
+      const row = ranking().find((r) => r.u.id === mine);
+      const u = unitById(mine);
+      const allowed = skipsAllowed(mine);
       html += `<section class="round">
-        <div class="round-top"><div><span class="lbl">Jouw ronde</span><b>${t.n} van ${list.length} holes</b></div>
+        <div class="round-top"><div><span class="lbl">${u && u.team ? esc(u.name) : 'Jouw ronde'}</span><b>${t.n} van ${live.length} holes</b></div>
           <div class="round-stats"><div><span class="lbl">Score</span><b class="${t.n ? relCls(t.rel) : ''}">${t.n ? fmtRel(t.rel) : '–'}</b></div>
-            <div><span class="lbl">Plek</span><b>${mine && mine.rank ? mine.rank + 'e' : '–'}</b></div></div></div>
-        <div class="bar"><i style="width:${list.length ? Math.round((100 * t.n) / list.length) : 0}%"></i></div>
+            <div><span class="lbl">Plek</span><b>${row && row.rank ? row.rank + 'e' : '–'}</b></div></div></div>
+        <div class="bar"><i style="width:${live.length ? Math.round((100 * t.n) / live.length) : 0}%"></i></div>
+        ${allowed ? `<p class="mut small">Je speelt solo en mag ${allowed} holes naar keuze overslaan. Nog ${Math.max(0, allowed - t.skips)} over.</p>` : ''}
       </section>`;
     }
     if (cur) {
       const h = holeById(cur);
       const pinned = S.data.meta && S.data.meta.current === cur;
       html += `<button class="now" data-act="open-hole" data-id="${cur}">
-        <span class="now-l">${pinned ? 'We zijn nu bij' : 'Jouw volgende hole'}</span>
+        <span class="now-l">${pinned ? 'We zijn nu bij' : (mine && unitById(mine).team ? 'Jullie volgende hole' : 'Jouw volgende hole')}</span>
         <span class="now-t">Hole ${holeNo(cur)} · ${esc(h.name || '')}</span><span class="now-go">${ico('chev')}</span></button>`;
     }
     if (isOrg()) {
@@ -833,22 +927,23 @@
     }
     if (!list.length) html += '<div class="empty">Nog geen kroegen. De organisator kan ze toevoegen.</div>';
     list.forEach((h, i) => {
-      const info = holeInfo(h, pid);
-      const sc = scoreOf(pid, h.id);
-      const st = strokesOf(sc, info.par, h);
-      const doneN = players.filter((p) => { const s = scoreOf(p.id, h.id); return s && s.done; }).length;
-      html += `<div class="hole ${h.id === cur ? 'cur' : ''} ${st != null ? 'done' : ''}" data-act="open-hole" data-id="${h.id}" role="button" tabindex="0">
+      const info = holeInfo(h, mine);
+      const sc = scoreOf(mine, h.id);
+      const st = h.off ? null : strokesOf(sc, info.par, h);
+      const doneN = units.filter((u) => { const x = scoreOf(u.id, h.id); return x && x.done; }).length;
+      html += `<div class="hole ${h.id === cur ? 'cur' : ''} ${st != null ? 'done' : ''} ${h.off ? 'off' : ''}" data-act="open-hole" data-id="${h.id}" role="button" tabindex="0">
         <div class="hole-no">${i + 1}</div>
         <div class="hole-main"><div class="hole-name">${esc(h.name || 'Hole ' + (i + 1))}</div>
-          <div class="hole-sub">${holeLine(h, pid)}</div>
-          ${h.task ? `<div class="hole-task">🎯 ${esc(h.task)}</div>` : ''}
-          <div class="hole-meta">${[h.addr ? esc(h.addr) : '', doneN ? doneN + '/' + players.length + ' klaar' : ''].filter(Boolean).join(' · ')}</div></div>
+          <div class="hole-sub">${h.off ? 'Vervalt · telt niet mee' : holeLine(h, mine)}</div>
+          ${h.task && !h.off ? `<div class="hole-task">🎯 ${esc(h.task)}</div>` : ''}
+          <div class="hole-meta">${[h.addr ? esc(h.addr) : '', doneN && !h.off ? doneN + '/' + units.length + ' klaar' : ''].filter(Boolean).join(' · ')}</div></div>
         ${ui.editHoles && isOrg()
           ? `<div class="hole-tools"><button class="mini" data-act="hole-move" data-id="${h.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Omhoog">${ico('up')}</button>
              <button class="mini" data-act="hole-move" data-id="${h.id}" data-d="1" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Omlaag">${ico('down')}</button>
              <button class="mini" data-act="hole-edit" data-id="${h.id}" aria-label="Bewerken">${ico('edit')}</button></div>`
           : st != null
-            ? `<div class="hole-score"><b>${st}</b><span class="rel ${relCls(st - info.par)}">${fmtRel(st - info.par)}</span></div>`
+            ? (sc.skip ? '<div class="hole-score"><span class="rel">overgeslagen</span></div>'
+              : `<div class="hole-score"><b>${st}</b><span class="rel ${relCls(st - info.par)}">${fmtRel(st - info.par)}</span></div>`)
             : `<div class="hole-go">${ico('chev')}</div>`}
       </div>`;
     });
@@ -857,21 +952,34 @@
   }
 
   const RING = 339.3;   // omtrek van de voortgangsring (r = 54)
-  function scoreEditor(h, pid, info, sc) {
-    const p = S.data.players[pid];
-    const sips = clamp(+sc.sips || 0, 0, 99);
+  const LOCK_NOTE = '<p class="lock">🔒 Deze score staat op slot. Alleen de organisator kan hem nog aanpassen.</p>';
+  const scoreTitle = (u) => (u.id === myUnit() ? (u.team ? 'Score van jullie team' : 'Jouw score') : 'Score van ' + esc(u.name));
+  /** Wie hoeveel teugen telde, zodat een team ziet hoe het totaal is opgebouwd. */
+  function byLine(u, sc) {
+    const by = (sc && sc.by) || {};
+    if (u.members.length < 2 && !(+by.org > 0)) return '';
+    const parts = u.members.map((p) => `<span class="${p.id === S.me ? 'me' : ''}">${esc(p.emoji || '🍺')} ${esc(p.name)} <b>${+by[p.id] || 0}</b></span>`);
+    if (+by.org > 0) parts.push(`<span>organisator <b>${+by.org}</b></span>`);
+    return `<div class="bywho">${parts.join('')}</div>`;
+  }
+  function scoreEditor(h, uidKey, info, sc) {
+    const u = unitById(uidKey);
+    const sips = clamp(sipsOf(sc), 0, 99);
     const pens = Array.isArray(sc.pens) ? sc.pens.filter(Boolean) : [];
-    const mine = pid === S.me;
-    const preview = sc.dnf || sips > 0 ? strokesOf(Object.assign({}, sc, { done: true }), info.par, h) : null;
-    const term = preview != null ? termFor(sc, preview, info.par, h) : null;
+    const draft = Object.assign({}, sc, { done: true, skip: false });
+    const preview = sc.dnf || sips > 0 ? strokesOf(draft, info.par, h) : null;
+    const term = preview != null ? termFor(draft, preview, info.par, h) : null;
     const needTask = !!h.task && !sc.task;
     const allPens = holePens(h).concat(penList());
     const ringCls = sips === 0 ? '' : sips < info.par ? 'under' : sips === info.par ? 'even' : 'over';
+    const canDec = +((sc.by || {})[scoreKey(uidKey)]) > 0 || (isOrg() && sips > 0);
+    const allowed = skipsAllowed(uidKey);
+    const left = allowed - skipsUsed(uidKey);
     return `<section class="card score">
-      <h3>${mine ? 'Jouw score' : 'Score van ' + esc(p.name)}</h3>
-      <p class="mut small">Tik op de cirkel bij elke teug. In één keer leeg is een hole-in-one.</p>
+      <h3>${scoreTitle(u)}</h3>
+      <p class="mut small">${u.members.length > 1 ? 'Jullie delen één glas. Tik op de cirkel bij elke teug, wie er ook drinkt: alle teugen tellen samen.' : 'Tik op de cirkel bij elke teug. In één keer leeg is een hole-in-one.'}</p>
       <div class="counter ${sc.dnf ? 'dim' : ''}">
-        <button class="cbtn" data-act="sip" data-d="-1" aria-label="Eén teug minder" ${sips ? '' : 'disabled'}>−</button>
+        <button class="cbtn" data-act="sip" data-d="-1" aria-label="Eén teug minder" ${canDec ? '' : 'disabled'}>−</button>
         <button class="tap ${ringCls}" data-act="sip" data-d="1" aria-label="Eén teug erbij">
           <svg class="ring" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="54"/>
             <circle class="ring-fg" cx="60" cy="60" r="54" stroke-dasharray="${RING}" stroke-dashoffset="${(RING * (1 - clamp(sips / info.par, 0, 1))).toFixed(1)}"/></svg>
@@ -879,6 +987,7 @@
         </button>
         <div class="tap-hint"><span class="lbl">Par</span><b>${info.par}</b>tik = +1</div>
       </div>
+      ${byLine(u, sc)}
       <div class="quick">${[1, 2, 3, 4, 5, 6].map((n) => `<button class="chip ${!sc.dnf && sips === n ? 'on' : ''}" data-act="sip-set" data-n="${n}">${n === 1 ? '1× 🎯' : n}</button>`).join('')}</div>
       <button class="chip wide ${sc.dnf ? 'on bad' : ''}" data-act="dnf">🚫 Niet opgedronken (par + ${dnfExtra()})</button>
       ${h.task ? `<h4>Opdracht</h4>
@@ -893,30 +1002,45 @@
         : needTask ? '<span>Kies nog of de opdracht gelukt is</span>'
         : `<b>${esc(term.t)}</b><span>${preview} ${Math.abs(preview) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(preview - info.par)}</span>`}</div>
       <button class="btn big" data-act="score-done" ${preview == null || needTask ? 'disabled' : ''}>${sc.done ? 'Klaar ✓' : 'Glas leeg — score opslaan ✓'}</button>
+      ${allowed && !sc.done ? `<button class="btn ghost" data-act="skip" ${left > 0 ? '' : 'disabled'}>Deze hole overslaan (nog ${Math.max(0, left)} van ${allowed})</button>` : ''}
     </section>`;
   }
-  function scoreSummary(h, pid, info, sc) {
-    const p = S.data.players[pid];
+  function scoreSummary(h, uidKey, info, sc) {
+    const u = unitById(uidKey);
+    const lock = locked(sc);
+    const edBy = sc.ed && sc.ed.by ? (sc.ed.by === 'org' ? 'de organisator' : (S.data.players[sc.ed.by] || {}).name || 'iemand') : '';
+    const foot = lock ? LOCK_NOTE : (isOrg() || !EDIT_MIN ? '' : `<p class="mut small center">Aanpassen kan tot ${EDIT_MIN} minuten na het opslaan, daarna alleen door de organisator.</p>`);
+    if (sc.skip) {
+      return `<section class="card score saved">
+        <h3>${scoreTitle(u)}</h3>
+        <div class="saved-row"><div class="saved-n">–</div>
+          <div class="saved-t"><b>Overgeslagen</b><span>telt als par · ${skipsUsed(uidKey)} van ${skipsAllowed(uidKey)} gebruikt</span></div></div>
+        ${lock || !canScore(uidKey) ? '' : '<button class="btn ghost" data-act="unskip">Toch spelen</button>'}${foot}
+      </section>`;
+    }
     const st = strokesOf(sc, info.par, h);
     const term = termFor(sc, st, info.par, h);
     const pen = penTotal(sc);
     const mod = taskMod(h, sc);
+    const n = sipsOf(sc);
     return `<section class="card score saved ${term.cls}">
-      <h3>${pid === S.me ? 'Jouw score' : 'Score van ' + esc(p.name)}</h3>
+      <h3>${scoreTitle(u)}</h3>
       <div class="saved-row"><div class="saved-n">${st}</div>
         <div class="saved-t"><b>${esc(term.t)}</b>
-          <span>${sc.dnf ? 'niet opgedronken' : (+sc.sips === 1 ? 'in 1 teug' : 'in ' + (+sc.sips || 1) + ' teugen')}${pen ? ' + ' + pen + ' straf' : ''}${h.task && sc.task ? ' · opdracht ' + (sc.task === 'w' ? 'gelukt ' : 'mislukt ') + fmtMod(mod) : ''} · par ${info.par}</span></div>
+          <span>${sc.dnf ? 'niet opgedronken' : (n === 1 ? 'in 1 teug' : 'in ' + (n || 1) + ' teugen')}${pen ? ' + ' + pen + ' straf' : ''}${h.task && sc.task ? ' · opdracht ' + (sc.task === 'w' ? 'gelukt ' : 'mislukt ') + fmtMod(mod) : ''} · par ${info.par}</span></div>
         <div class="rel big ${relCls(st - info.par)}">${fmtRel(st - info.par)}</div></div>
-      <button class="btn ghost" data-act="score-edit">Aanpassen</button>
+      ${byLine(u, sc)}
+      ${edBy ? `<p class="mut small">✏️ Na het opslaan aangepast door ${esc(edBy)}.</p>` : ''}
+      ${lock || !canScore(uidKey) ? '' : '<button class="btn ghost" data-act="score-edit">Aanpassen</button>'}${foot}
     </section>`;
   }
   function viewHole(h) {
     const list = holesList();
     const idx = list.findIndex((x) => x.id === h.id);
-    const pid = targetPid();
-    const info = holeInfo(h, pid);
-    const sc = scoreOf(pid, h.id) || {};
-    const players = playersList();
+    const tu = targetUnit();
+    const info = holeInfo(h, tu);
+    const sc = scoreOf(tu, h.id) || {};
+    const units = unitsList();
     const pinned = S.data.meta && S.data.meta.current === h.id;
     const hp = holePens(h);
     let html = `<div class="subbar">
@@ -929,71 +1053,89 @@
       <div class="hero-no">${idx + 1}</div>
       <h2>${esc(h.name || 'Hole ' + (idx + 1))}</h2>
       ${h.addr ? `<a class="addr" href="${esc(navUrl(h))}" target="_blank" rel="noopener">${ico('pin')}${esc(h.addr)} · <u>Navigeer</u></a>` : ''}
-      <div class="tiles"><div class="tile"><span class="lbl">Drankje</span><b>${h.type === 'wheel' ? '🎡 ' + (info.drink && !info.needSpin ? esc(info.drink) : 'Het rad') : drinkIcon(h.drink) + ' ' + esc(h.drink || 'Drankje')}</b></div>
-        <div class="tile par"><span class="lbl">Par</span><b>${info.par != null ? info.par : '?'}</b></div></div>
-      ${h.task ? `<div class="hero-task"><b>🎯 Opdracht: ${esc(h.task)}</b><span>Gelukt ${fmtMod(+h.win || 0)} · Mislukt ${fmtMod(+h.lose || 0)}</span></div>` : ''}
-      ${hp.length ? `<div class="hero-pen">⚠️ Straf hier: ${hp.map((x) => esc(x.l) + ' +' + (+x.n || 1)).join(' · ')}</div>` : ''}
+      ${h.off ? '<div class="hero-pen">Deze kroeg vervalt en telt niet mee.</div>' : `<div class="tiles"><div class="tile"><span class="lbl">Drankje</span><b>${h.type === 'wheel' ? '🎡 ' + (info.drink && !info.needSpin ? esc(info.drink) : 'Het rad') : drinkIcon(h.drink) + ' ' + esc(h.drink || 'Drankje')}</b></div>
+        <div class="tile par"><span class="lbl">Par</span><b>${info.par != null ? info.par : '?'}</b></div></div>`}
+      ${h.task && !h.off ? `<div class="hero-task"><b>🎯 Opdracht: ${esc(h.task)}</b><span>Gelukt ${fmtMod(+h.win || 0)} · Mislukt ${fmtMod(+h.lose || 0)}</span></div>` : ''}
+      ${hp.length && !h.off ? `<div class="hero-pen">⚠️ Straf hier: ${hp.map((x) => esc(x.l) + ' +' + (+x.n || 1)).join(' · ')}</div>` : ''}
       ${h.note ? `<p class="hero-note">${esc(h.note)}</p>` : ''}
       ${pinned ? '<span class="badge">📍 Hier zijn we nu</span>' : ''}
-      ${isOrg() ? `<div class="chips center">${pinned ? '' : `<button class="chip" data-act="hole-pin">${ico('pin')} Maak actief</button>`}
+      ${isOrg() ? `<div class="chips center">${pinned || h.off ? '' : `<button class="chip" data-act="hole-pin">${ico('pin')} Maak actief</button>`}
         <button class="chip" data-act="hole-edit" data-id="${h.id}">${ico('edit')} Bewerken</button></div>` : ''}
     </section>`;
+    if (h.off) return html;
 
-    if (isOrg() && players.length > 1) {
+    if (isOrg() && units.length > 1) {
       html += `<div class="who"><span class="mut small">Score invullen voor</span><div class="chips scroll">
-        ${players.map((p) => `<button class="chip ${p.id === pid ? 'on' : ''}" data-act="pick-player" data-id="${p.id}">${esc(p.emoji || '🍺')} ${esc(p.name)}</button>`).join('')}</div></div>`;
+        ${units.map((u) => `<button class="chip ${u.id === tu ? 'on' : ''}" data-act="pick-unit" data-id="${u.id}">${esc(u.emoji)} ${esc(u.name)}</button>`).join('')}</div></div>`;
     }
 
-    if (h.type === 'wheel') {
-      const opts = wheelOpts(h);
-      const sp = spinOf(h, pid);
-      const key = h.id + '/' + spinKey(h, pid);
+    const skipped = !!(sc.skip && sc.done);
+    if (h.type === 'wheel' && !skipped) {
+      const sp = spinOf(h, tu);
+      const ws = wheelState(h, tu);
+      const opts = sp ? spinOpts(sp, h) : ws.opts;
+      const key = h.id + '/' + spinKey(h, tu);
       const step = opts.length ? 360 / opts.length : 360;
       const rot = sp && opts.length ? (ui.wheelRot[key] != null ? ui.wheelRot[key] : -((+sp.i || 0) + 0.5) * step) : 0;
       const group = h.wheelMode === 'group';
+      const maySpin = group ? !!(meP() || isOrg()) : canScore(tu);
+      const anyDone = group ? units.some((u) => { const x = scoreOf(u.id, h.id); return x && x.done && !x.skip; }) : !!sc.done;
+      const naRows = naList(h.id);
       html += `<section class="card wheel-card">
         <h3>Het rad</h3>
-        <p class="mut small">${group ? 'Eén draai geldt voor de hele groep.' : 'Iedereen draait zelf voor z\'n eigen drankje.'}</p>
-        ${opts.length ? `<div class="wheel-box"><div class="pointer"></div>${wheelSvg(opts, rot)}</div>` : '<div class="empty">Dit rad heeft nog geen drankjes.</div>'}
+        <p class="mut small">${group ? 'Eén draai geldt voor de hele groep.' : (units.some((u) => u.team) ? 'Elk team draait voor z\'n eigen drankje.' : 'Iedereen draait zelf voor z\'n eigen drankje.')}</p>
+        ${opts.length ? `<div class="wheel-box"><div class="pointer"></div>${wheelSvg(opts, rot)}</div>` : '<div class="empty">Er staat niets meer op dit rad. De organisator kan de kroeg aanpassen.</div>'}
         ${sp
-          ? `<div class="spin-result"><span>${group ? 'Het drankje is' : (pid === S.me ? 'Jouw drankje' : 'Drankje van ' + esc((S.data.players[pid] || {}).name))}</span>
+          ? `<div class="spin-result"><span>${group ? 'Het drankje is' : (tu === myUnit() ? (unitById(tu).team ? 'Jullie drankje' : 'Jouw drankje') : 'Drankje van ' + esc((unitById(tu) || {}).name))}</span>
               <b>${drinkIcon(sp.label)} ${esc(sp.label)}</b><span>par ${+sp.par || 1}</span></div>
+              ${maySpin && !anyDone ? '<button class="btn ghost" data-act="drink-na">Dit drankje is er niet</button>' : ''}
               ${isOrg() ? '<button class="btn ghost" data-act="spin-reset">Opnieuw laten draaien</button>' : ''}`
-          : (group ? (pid || isOrg()) : pid) && opts.length
+          : maySpin && opts.length
             ? '<button class="btn big spin-btn" data-act="spin">Draai aan het rad!</button>'
             : ''}
         ${!sp && opts.length ? `<p class="wheel-legend">${opts.map((o) => esc(o.label) + ' <b>par ' + (+o.par || 1) + '</b>').join(' · ')}</p>` : ''}
+        ${!sp && ws.reset ? '<p class="mut small">Alle drankjes zijn al een keer getrokken. Het rad begint opnieuw.</p>' : ''}
+        ${!sp && ws.used.length ? `<p class="mut small used">Al gehad en van het rad: ${ws.used.map(esc).join(', ')}.</p>` : ''}
+        ${naRows.length ? `<p class="mut small na">Hier niet verkrijgbaar: ${naRows.map((x) => esc(x.l) + (isOrg() ? ` <button class="linkbtn" data-act="na-del" data-id="${x.id}">terugzetten</button>` : '')).join(', ')}.</p>` : ''}
       </section>`;
     }
 
-    if (pid && info.par != null) {
-      html += sc.done && !ui.editing ? scoreSummary(h, pid, info, sc) : scoreEditor(h, pid, info, sc);
-    } else if (pid && h.type === 'wheel') {
-      html += '<section class="card"><p class="mut">Draai eerst aan het rad, daarna kun je je teugen tellen.</p></section>';
-    } else if (!pid) {
+    const allowed = skipsAllowed(tu);
+    if (tu && skipped && !ui.editing) {
+      html += scoreSummary(h, tu, info, sc);
+    } else if (tu && info.par != null) {
+      const show = sc.done && (!ui.editing || locked(sc));
+      html += show || !canScore(tu) ? (sc.done ? scoreSummary(h, tu, info, sc) : '') : scoreEditor(h, tu, info, sc);
+    } else if (tu && h.type === 'wheel') {
+      html += `<section class="card"><p class="mut">Draai eerst aan het rad, daarna kun je je teugen tellen.</p>
+        ${allowed && canScore(tu) ? `<button class="btn ghost" data-act="skip" ${allowed - skipsUsed(tu) > 0 ? '' : 'disabled'}>Deze hole overslaan (nog ${Math.max(0, allowed - skipsUsed(tu))} van ${allowed})</button>` : ''}</section>`;
+    } else if (!tu) {
       html += '<section class="card"><p class="mut">Je kijkt alleen mee. Doe mee via <b>Meer → Meedoen</b> om scores in te vullen.</p></section>';
     }
 
     html += `<section class="card"><h3>Iedereen op deze hole</h3><div class="plist">`;
-    if (!players.length) html += '<p class="mut">Nog geen spelers.</p>';
-    players.forEach((p) => {
-      const pi = holeInfo(h, p.id);
-      const ps = scoreOf(p.id, h.id);
+    if (!units.length) html += '<p class="mut">Nog geen spelers.</p>';
+    units.forEach((u) => {
+      const pi = holeInfo(h, u.id);
+      const ps = scoreOf(u.id, h.id);
       const st = strokesOf(ps, pi.par, h);
       let right = '<span class="mut">—</span>', sub = '';
-      if (st != null) {
+      if (ps && ps.skip && ps.done) {
+        right = '<span class="rel">overgeslagen</span>';
+        sub = 'telt als par';
+      } else if (st != null) {
         const term = termFor(ps, st, pi.par, h);
         right = `<b>${st}</b><span class="rel ${relCls(st - pi.par)}">${fmtRel(st - pi.par)}</span>`;
-        sub = term.t + (h.type === 'wheel' ? ' · ' + pi.drink : '') + (h.task && ps.task ? ' · opdracht ' + (ps.task === 'w' ? 'gelukt' : 'mislukt') : '');
-      } else if (ps && (+ps.sips > 0 || ps.dnf)) {
-        sub = 'bezig… ' + (+ps.sips || 0) + (+ps.sips === 1 ? ' teug' : ' teugen');
+        sub = term.t + (h.type === 'wheel' ? ' · ' + pi.drink : '') + (h.task && ps.task ? ' · opdracht ' + (ps.task === 'w' ? 'gelukt' : 'mislukt') : '') + (ps.ed ? ' · aangepast' : '');
+      } else if (ps && (sipsOf(ps) > 0 || ps.dnf)) {
+        sub = 'bezig… ' + sipsOf(ps) + (sipsOf(ps) === 1 ? ' teug' : ' teugen');
         right = '<span class="busy">🍺</span>';
       } else if (h.type === 'wheel' && pi.drink) {
         sub = pi.drink + ' · par ' + pi.par;
       }
-      html += `<div class="prow ${p.id === S.me ? 'me' : ''}" ${isOrg() ? `data-act="pick-player" data-id="${p.id}" role="button"` : ''}>
-        <span class="av">${esc(p.emoji || '🍺')}</span>
-        <span class="pn"><b>${esc(p.name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
+      html += `<div class="prow ${u.id === myUnit() ? 'me' : ''}" ${isOrg() ? `data-act="pick-unit" data-id="${u.id}" role="button"` : ''}>
+        <span class="av ${u.team ? 'duo' : ''}">${esc(u.emoji)}</span>
+        <span class="pn"><b>${esc(u.name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
         <span class="pr">${right}</span></div>`;
     });
     html += '</div></section>';
@@ -1026,29 +1168,30 @@
     const rows = ranking();
     if (!rows.length) return '<div class="empty">Nog geen spelers.</div>';
     const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
-    const nHoles = holesList().length;
+    const nHoles = liveHoles().length;
     const started = rows.filter((r) => r.n > 0);
     const pod = started.length >= 3 ? started.slice(0, 3) : [];
+    const mine = myUnit();
     let html = '';
     if (pod.length) {
-      html += `<div class="podium">${[pod[1], pod[0], pod[2]].map((r) => `<div class="pod p${pod.indexOf(r) + 1} ${r.p.id === S.me ? 'me' : ''}" data-flip="${r.p.id}">
-        <div class="pod-av">${esc(r.p.emoji || '🍺')}</div>
-        <b class="pod-name">${esc(r.p.name)}</b>
+      html += `<div class="podium">${[pod[1], pod[0], pod[2]].map((r) => `<div class="pod p${pod.indexOf(r) + 1} ${r.u.id === mine ? 'me' : ''}" data-flip="${r.u.id}">
+        <div class="pod-av ${r.u.team ? 'duo' : ''}">${esc(r.u.emoji)}</div>
+        <b class="pod-name">${esc(r.u.name)}</b>
         <span class="rel big ${relCls(r.rel)}">${fmtRel(r.rel)}</span>
-        <small>${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 3)) : ''}</small>
+        <small>${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles}${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 3)) : ''}</small>
         <div class="pod-step">${r.rank}</div></div>`).join('')}</div>`;
     }
     html += '<div class="board">';
     rows.filter((r) => !pod.includes(r)).forEach((r) => {
-      html += `<div class="brow ${r.p.id === S.me ? 'me' : ''} ${r.rank === 1 ? 'lead' : ''}" data-flip="${r.p.id}">
+      html += `<div class="brow ${r.u.id === mine ? 'me' : ''} ${r.rank === 1 ? 'lead' : ''}" data-flip="${r.u.id}">
         <div class="rank">${r.rank ? (!pod.length && medals[r.rank]) || r.rank : '–'}</div>
-        <div class="av big">${esc(r.p.emoji || '🍺')}</div>
-        <div class="bmain"><b>${esc(r.p.name)}</b>
-          <small>${r.n ? `${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles} holes${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
+        <div class="av big ${r.u.team ? 'duo' : ''}">${esc(r.u.emoji)}</div>
+        <div class="bmain"><b>${esc(r.u.name)}</b>
+          <small>${r.n ? `${r.str} ${Math.abs(r.str) === 1 ? 'slag' : 'slagen'} · ${r.n}/${nHoles} holes${r.skips ? ' · ' + r.skips + ' overgeslagen' : ''}${r.hio ? ' · ' + '🎯'.repeat(Math.min(r.hio, 5)) : ''}` : 'nog niet gestart'}</small></div>
         <div class="rel huge ${r.n ? relCls(r.rel) : 'par'}">${r.n ? fmtRel(r.rel) : '–'}</div>
       </div>`;
     });
-    html += '</div><p class="mut small center">Laagste score wint. De stand is ten opzichte van par over de holes die je gespeeld hebt.</p>';
+    html += `</div><p class="mut small center">De minste teugen wint. De stand is ten opzichte van par over de holes die gespeeld zijn${rows.some((r) => skipsAllowed(r.u.id)) ? '; een overgeslagen hole telt als par' : ''}.</p>`;
     return html;
   }
 
@@ -1056,18 +1199,20 @@
     const holes = holesList();
     const rows = ranking();
     if (!holes.length || !rows.length) return '<div class="empty">Nog niets om te tonen.</div>';
+    const mine = myUnit();
     let html = '<div class="card-scroll"><table class="sc"><thead><tr><th class="sticky">Hole</th>';
-    holes.forEach((h, i) => { html += `<th>${i + 1}</th>`; });
+    holes.forEach((h, i) => { html += `<th class="${h.off ? 'offcol' : ''}">${i + 1}</th>`; });
     html += '<th>Tot</th><th>±</th></tr><tr class="parrow"><th class="sticky">Par</th>';
-    holes.forEach((h) => { html += `<td>${h.type === 'wheel' ? '🎡' : Math.max(1, +h.par || 1)}</td>`; });
+    holes.forEach((h) => { html += `<td>${h.off ? '✕' : h.type === 'wheel' ? '🎡' : Math.max(1, +h.par || 1)}</td>`; });
     html += '<td></td><td></td></tr></thead><tbody>';
     rows.forEach((r) => {
-      html += `<tr class="${r.p.id === S.me ? 'me' : ''}"><th class="sticky">${esc(r.p.emoji || '🍺')} ${esc(r.p.name)}</th>`;
+      html += `<tr class="${r.u.id === mine ? 'me' : ''}"><th class="sticky">${esc(r.u.emoji)} ${esc(r.u.name)}</th>`;
       holes.forEach((h) => {
-        const info = holeInfo(h, r.p.id);
-        const sc = scoreOf(r.p.id, h.id);
-        const st = strokesOf(sc, info.par, h);
+        const info = holeInfo(h, r.u.id);
+        const sc = scoreOf(r.u.id, h.id);
+        const st = h.off ? null : strokesOf(sc, info.par, h);
         if (st == null) { html += '<td class="nil">·</td>'; return; }
+        if (sc.skip) { html += '<td><span class="cell skip">–</span></td>'; return; }
         const d = st - info.par;
         const cls = sc.dnf ? 'dnf' : termFor(sc, st, info.par, h).cls === 'hio' ? 'hio' : d < 0 ? 'under' : d > 0 ? 'over' : 'even';
         html += `<td><span class="cell ${cls}">${st}</span></td>`;
@@ -1076,7 +1221,7 @@
     });
     html += `</tbody></table></div>
       <div class="legend"><span><i class="cell hio">1</i> hole-in-one</span><span><i class="cell under">2</i> onder par</span>
-      <span><i class="cell even">3</i> par</span><span><i class="cell over">4</i> boven par</span><span><i class="cell dnf">7</i> niet leeg</span></div>`;
+      <span><i class="cell even">3</i> par</span><span><i class="cell over">4</i> boven par</span><span><i class="cell dnf">7</i> niet leeg</span><span><i class="cell skip">–</i> overgeslagen</span></div>`;
     return html;
   }
 
@@ -1110,40 +1255,48 @@
         <div class="link">${esc(link)}</div>
         <div class="btnrow"><button class="btn" data-act="share">Deel link</button><button class="btn ghost" data-act="copy">Kopieer</button></div></section>`;
     }
+    const solo = soloSkips();
     html += `<section class="card"><h3>Spelregels</h3>
       <ul class="rules">
-        <li>Elke kroeg is een hole met een drankje en een <b>par</b>: het aantal teugen waarin je het glas leeg hoort te hebben.</li>
-        <li>Tel je <b>teugen</b>. In één keer achterover is een <b>hole-in-one</b>.</li>
-        <li>Staat er een <b>rad</b> bij de hole, dan bepaalt het rad je drankje en je par.</li>
+        <li>Elke kroeg is een hole met een drankje en een <b>par</b>: het aantal teugen waarin het glas leeg hoort te zijn.</li>
+        <li>Een <b>team</b> deelt één glas en drinkt het samen zo snel mogelijk leeg. Elke teug telt, wie hem ook neemt: twee keer een kwart en twee keer een kwart is vier teugen.</li>
+        <li>In één keer achterover is een <b>hole-in-one</b>. De minste teugen wint.</li>
+        ${solo ? `<li>Wie <b>solo</b> speelt mag ${solo} holes naar keuze overslaan. Een overgeslagen hole telt als par.</li>` : ''}
+        <li>Staat er een <b>rad</b> bij de hole, dan bepaalt het rad het drankje en de par.${wheelOnce() ? ' Een drankje dat je al trok verdwijnt van jouw rad.' : ''} Is het drankje er niet, meld dat dan en draai opnieuw.</li>
         <li>Bij sommige kroegen hoort een <b>opdracht</b>, zoals Split the G: gelukt gaat van je score af, mislukt komt erbij.</li>
         <li>Glas niet leeg? Dan krijg je par + ${dnfExtra()}.</li>
         ${penList().length ? `<li>Strafslagen: ${penList().map((p) => esc(p.l) + ' +' + (+p.n || 1)).join(', ')}.</li>` : ''}
-        <li>Laagste totaalscore wint. Fris of 0.0 telt net zo goed.</li>
+        <li><b>Eerlijk spelen:</b> je vult alleen de score van je eigen team in. ${EDIT_MIN ? 'Tot ' + EDIT_MIN + ' minuten na het opslaan kun je nog iets herstellen, daarna' : 'Na het opslaan'} kan alleen de organisator een score aanpassen, en dat is voor iedereen zichtbaar.</li>
       </ul></section>`;
     html += `<section class="card"><h3>Jij</h3>`;
     if (me) {
-      html += `<div class="prow"><span class="av big">${esc(me.emoji || '🍺')}</span><span class="pn"><b>${esc(me.name)}</b><small>speler</small></span></div>
+      const u = unitById(myUnit());
+      const mates = u ? u.members.filter((p) => p.id !== pid).map((p) => p.name) : [];
+      const allowed = skipsAllowed(myUnit());
+      html += `<div class="prow"><span class="av big">${esc(me.emoji || '🍺')}</span><span class="pn"><b>${esc(me.name)}</b>
+          <small>${isOrg() ? 'Organisator' : 'Speler'} · ${u && u.team ? esc(u.name) + (mates.length ? ' (met ' + esc(mates.join(', ')) + ')' : '') : 'solo' + (allowed ? ', mag ' + allowed + ' holes overslaan' : '')}</small></span></div>
         <div class="btnrow"><button class="btn ghost" data-act="profile">Profiel wijzigen</button><button class="btn ghost" data-act="logout">Wissel speler</button></div>`;
     } else {
-      html += '<p class="mut">Je kijkt alleen mee.</p><button class="btn" data-act="logout">Meedoen</button>';
+      html += '<p class="mut">Je kijkt alleen mee en kunt niets aanpassen.</p><button class="btn" data-act="logout">Meedoen</button>';
     }
     html += '</section>';
     html += '<section class="card"><h3>Organisator</h3>';
     if (isOrg()) {
-      html += `<p class="mut small">Je kunt kroegen aanpassen (tabblad Holes), scores van iedereen invullen en de actieve hole kiezen.</p>
+      html += `<p class="mut small">Als organisator deel je de teams in, pas je kroegen en het rad aan en kun je elke score corrigeren.</p>
         <div class="stack">
+          <button class="btn ghost" data-act="teams">Teams indelen</button>
           <button class="btn ghost" data-act="settings">Spelinstellingen en strafslagen</button>
           <button class="btn ghost" data-act="wheel-edit">Het rad instellen</button>
-          <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
-          <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
           <button class="btn ghost" data-act="players">Spelers beheren</button>
           <button class="btn ghost" data-act="unpin">Actieve hole loslaten</button>
+          <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
+          <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost danger" data-act="reset-scores">Alle scores wissen</button>
           ${LOCAL ? '' : '<button class="btn ghost" data-act="org-off">Organisator-modus uit</button>'}
         </div>`;
     } else {
-      html += '<p class="mut small">Met de pincode kun je kroegen aanpassen en scores van anderen invullen.</p><button class="btn ghost" data-act="org-on">Ontgrendel met pincode</button>';
+      html += '<p class="mut small">Alleen de organisator kan teams, kroegen en het rad aanpassen en scores van anderen corrigeren.</p><button class="btn ghost" data-act="org-on">Ontgrendel met pincode</button>';
     }
     html += '</section>';
     const st = statusInfo();
@@ -1241,7 +1394,7 @@
     const ring = app.querySelector('.ring-fg');
     if (ring) {
       const to = ring.getAttribute('stroke-dashoffset');
-      const id = ui.hole + '/' + targetPid();
+      const id = ui.hole + '/' + targetUnit();
       if (ui.ring && ui.ring.id === id && ui.ring.v !== to) {
         ring.style.transition = 'none';
         ring.style.strokeDashoffset = ui.ring.v;
@@ -1258,9 +1411,13 @@
 
   // ------------------------------------------------------------ sheets
   function openSheet(html) {
+    // Staat er al een sheet open, dan wordt alleen de inhoud vervangen (bijv. na een keuze in het teamscherm).
+    const old = $('.sheet');
+    const top = old ? old.scrollTop : 0;
     $('#sheet-root').innerHTML = `<div class="backdrop" data-act="sheet-close"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
     document.body.classList.add('sheet-open');
-    history.pushState({ hole: ui.hole, sheet: 1 }, '');
+    if (old) { const el = $('.sheet'); el.style.animation = 'none'; el.scrollTop = top; }
+    if (!(history.state && history.state.sheet)) history.pushState({ hole: ui.hole, sheet: 1 }, '');
   }
   function removeSheet() {
     $('#sheet-root').innerHTML = '';
@@ -1328,6 +1485,8 @@
       <label class="field"><span>Eén per regel, met het aantal slagen achter een komma</span>
         <textarea id="h-hp" rows="2" spellcheck="false" placeholder="bijv. Naar de wc, 2">${esc(holePens(d).map((x) => x.l + ', ' + (+x.n || 1)).join('\n'))}</textarea></label>
       <label class="field"><span>Opmerking (optioneel)</span><input id="h-note" type="text" maxlength="120" value="${esc(d.note || '')}" placeholder="bijv. Verzamelen op het terras"></label>
+      ${h ? `<h4>Lukt deze kroeg niet?</h4>
+      <button class="chip wide ${d.off ? 'on bad' : ''}" id="h-off" data-act="tog" data-v="${d.off ? 1 : 0}">Deze kroeg vervalt (dicht of te druk) en telt niet mee</button>` : ''}
       <p id="h-msg" class="msg"></p>
       <button class="btn big" data-act="hole-save" data-id="${h ? h.id : ''}">Opslaan</button>
       ${h ? `<button class="btn ghost danger" data-act="hole-del" data-id="${h.id}">Kroeg verwijderen</button>` : ''}
@@ -1347,6 +1506,8 @@
       <label class="field"><span>Naam van het spel</span><input id="s-title" type="text" maxlength="40" value="${esc(m.title || '')}"></label>
       <label class="field"><span>Stad (voor de kaart en navigatie)</span><input id="s-city" type="text" maxlength="40" value="${esc(m.city || '')}" placeholder="bijv. Zwolle"></label>
       <label class="field"><span>Extra slagen bij "niet opgedronken" (bovenop par)</span><input id="s-dnf" type="number" inputmode="numeric" min="0" max="20" value="${dnfExtra()}"></label>
+      <label class="field"><span>Aantal holes dat een solospeler mag overslaan (als de rest in teams speelt)</span><input id="s-solo" type="number" inputmode="numeric" min="0" max="20" value="${soloSkips()}"></label>
+      <button class="chip wide ${wheelOnce() ? 'on' : ''}" id="s-once" data-act="tog" data-v="${wheelOnce() ? 1 : 0}">Een getrokken drankje verdwijnt van het rad</button>
       <label class="field"><span>Strafslagen — één per regel, met het aantal achter een komma</span>
         <textarea id="s-pens" rows="5" spellcheck="false">${esc(penList().map((p) => p.l + ', ' + (+p.n || 1)).join('\n'))}</textarea></label>
       ${LOCAL ? '' : '<label class="field"><span>Nieuwe organisator-pincode (leeg laten = niet wijzigen)</span><input id="s-pin" type="text" inputmode="numeric" maxlength="8" autocomplete="off"></label>'}
@@ -1359,6 +1520,7 @@
     ui.joinEmoji = me.emoji || ui.joinEmoji;
     openSheet(`<h2>Jouw profiel</h2>
       <label class="field"><span>Naam</span><input id="p-name" type="text" maxlength="20" value="${esc(me.name)}"></label>
+      ${LOCAL ? '' : '<label class="field"><span>Nieuwe pincode (leeg laten = niet wijzigen)</span><input id="p-pin" type="text" inputmode="numeric" maxlength="6" autocomplete="off"></label><p id="p-msg" class="msg"></p>'}
       <div class="emoji-grid" id="p-emoji">${EMOJIS.map((e) => `<button class="emoji ${e === ui.joinEmoji ? 'on' : ''}" data-act="pick-emoji" data-e="${e}">${e}</button>`).join('')}</div>
       <button class="btn big" data-act="profile-save">Opslaan</button>
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
@@ -1401,6 +1563,36 @@
       <button class="btn big" data-act="wheel-save">Opslaan</button>
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
   }
+  function sheetTeams() {
+    const players = playersList();
+    const teams = teamsList();
+    const solo = soloSkips();
+    const names = (t) => players.filter((p) => p.team === t.id).map((p) => p.name).join(' & ');
+    const label = (t, i) => t.name || 'Team ' + (i + 1) + (names(t) ? ' · ' + names(t) : '');
+    openSheet(`<h2>Teams</h2>
+      <p class="mut small">Een team deelt één glas en één score. Wie in geen team zit speelt solo${solo ? ' en mag ' + solo + ' holes naar keuze overslaan' : ''}. Deel de teams in vóór de eerste hole.</p>
+      <button class="btn ghost" data-act="team-auto">🎲 Willekeurig indelen in teams van 2</button>
+      <h4>Spelers</h4>
+      <div class="plist">${players.map((p) => `<div class="prow"><span class="av">${esc(p.emoji || '🍺')}</span><span class="pn"><b>${esc(p.name)}</b></span>
+        <select class="sel" data-change="team-set" data-id="${p.id}" aria-label="Team van ${esc(p.name)}">
+          <option value="">Solo</option>${teams.map((t, i) => `<option value="${t.id}" ${p.team === t.id ? 'selected' : ''}>${esc(label(t, i))}</option>`).join('')}
+          <option value="new">+ Nieuw team</option></select></div>`).join('') || '<p class="mut">Nog geen spelers. Laat iedereen eerst meedoen via de link.</p>'}</div>
+      ${teams.length ? `<h4>Teamnamen (optioneel)</h4>
+        ${teams.map((t, i) => `<div class="prow"><input class="tname" type="text" maxlength="24" data-change="team-name" data-id="${t.id}" value="${esc(t.name || '')}" placeholder="${esc(names(t) || 'Team ' + (i + 1))}" aria-label="Naam van team ${i + 1}">
+          <button class="mini danger" data-act="team-del" data-id="${t.id}" aria-label="Team verwijderen">🗑️</button></div>`).join('')}` : ''}
+      <button class="btn big" data-act="sheet-close">Klaar</button>`);
+  }
+  function sheetClaim(pid) {
+    const p = S.data.players[pid];
+    if (!p) return;
+    openSheet(`<h2>${esc(p.emoji || '🍺')} ${esc(p.name)}</h2>
+      <p class="mut small">${p.pin ? 'Vul de pincode in die je bij het meedoen koos. Kwijt? De organisator-pincode werkt ook.' : 'Deze speler is door de organisator toegevoegd. Vul de organisator-pincode in om als deze speler verder te gaan.'}</p>
+      <label class="field"><span>Pincode</span><input id="c-pin" type="text" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+      <p id="c-msg" class="msg"></p>
+      <button class="btn big" data-act="claim-check" data-id="${pid}">Verder als ${esc(p.name)}</button>
+      <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
+    setTimeout(() => { const el = $('#c-pin'); if (el) el.focus(); }, 50);
+  }
   function sheetNewGame() {
     openSheet(`<h2>Nieuw spel</h2>
       <p class="mut small">Elk spel heeft z'n eigen kroegen, spelers en scores, en een eigen link. Het huidige spel blijft bestaan.</p>
@@ -1428,26 +1620,30 @@
   function setOrg(on) {
     S.org = !!on;
     if (on) LS.set(NS + 'org', true); else LS.del(NS + 'org');
-    if (!on) { ui.pid = null; ui.editHoles = false; }
+    if (!on) { ui.uid = null; ui.editHoles = false; }
   }
-  function addPlayer(name, emoji, guest) {
+  const pinHash = (pid, pin) => hashStr('pp:' + pid + ':' + pin);
+  function addPlayer(name, emoji, guest, pin) {
     const pid = 'p' + uid(7);
     const p = { name: name.slice(0, 20), emoji: emoji || '🍺', t: now() };
     if (guest) p.guest = true;
+    if (pin) p.pin = pinHash(pid, pin);
     write('players/' + pid, p);
     return pid;
   }
-  function putScore(patch) {
+  /** Schrijft losse velden van de score van het gekozen team. Zo overschrijven twee telefoons elkaars invoer niet,
+   *  en hier zitten ook de rechten: alleen het eigen team (of de organisator), en niet meer als de score op slot zit. */
+  function setScore(fields) {
     const h = ui.hole ? holeById(ui.hole) : null;
-    const pid = targetPid();
-    if (!h || !pid) return;
-    const info = holeInfo(h, pid);
-    if (info.par == null) return;
-    const next = Object.assign({ sips: 0, done: false }, scoreOf(pid, h.id) || {}, patch, { t: now(), par: info.par, drink: info.drink || '' });
-    if (!next.pens || !next.pens.length) delete next.pens;
-    if (!next.dnf) delete next.dnf;
-    if (!next.task || !h.task) delete next.task;
-    write('scores/' + pid + '/' + h.id, next);
+    const u = targetUnit();
+    if (!h || h.off || !u) return false;
+    if (!canScore(u)) { toast('Je kunt alleen de score van je eigen team invullen.'); return false; }
+    const sc = scoreOf(u, h.id);
+    if (locked(sc)) { ui.editing = false; toast('Deze score staat op slot. Vraag de organisator.'); render(true); return false; }
+    const base = 'scores/' + u + '/' + h.id + '/';
+    for (const k in fields) write(base + k, fields[k]);
+    if (sc && sc.done && fields.done !== null && !('dt' in fields)) write(base + 'ed', { by: scoreKey(u), t: now() });
+    return true;
   }
   function openHole(id) {
     if (!S.data.holes[id]) return;
@@ -1456,6 +1652,10 @@
     history.pushState({ hole: id }, '');
     render(true);
   }
+  // Alleen de organisator mag deze acties uitvoeren, ook als iemand de knop op een andere manier weet te bereiken.
+  const ORG_ONLY = new Set(['hole-pin', 'unpin', 'spin-reset', 'na-del', 'toggle-edit-holes', 'hole-add', 'hole-edit', 'hole-move', 'hole-save', 'hole-del',
+    'settings', 'settings-save', 'player-add', 'player-add-save', 'players', 'player-del', 'reset-scores', 'route-load', 'wheel-edit', 'wheel-save',
+    'new-game', 'new-game-go', 'teams', 'team-auto', 'team-del', 'pick-unit', 'geo-all']);
 
   const A = {
     'tab'(el) {
@@ -1510,8 +1710,10 @@
       write('meta', d.meta);
       write('holes', d.holes);
       if (Object.keys(d.players).length) write('players', d.players);
+      if (Object.keys(d.teams).length) write('teams', d.teams);
       if (Object.keys(d.scores).length) write('scores', d.scores);
       if (Object.keys(d.spins).length) write('spins', d.spins);
+      if (Object.keys(d.na).length) write('na', d.na);
       const me = LS.get('pg.' + hashStr('local|' + GAME) + '.me', null);
       if (me && d.players[me]) setMe(me);
       setOrg(true);
@@ -1523,18 +1725,31 @@
     },
     'join'() {
       const name = val('in-name');
+      const pin = val('in-ppin');
       if (!name) { msg('join-msg', 'Vul eerst je naam in.'); return; }
       const dup = playersList().find((p) => p.name.toLowerCase() === name.toLowerCase());
       if (dup) {
-        if (!confirm(name + ' doet al mee. Ben jij dat?')) { msg('join-msg', 'Kies dan een andere naam.'); return; }
-        setMe(dup.id);
+        if (LOCAL) setMe(dup.id); else { msg('join-msg', name + ' doet al mee. Ben jij dat? Log dan in met je pincode.'); sheetClaim(dup.id); return; }
       } else {
-        setMe(addPlayer(name, ui.joinEmoji));
+        if (!LOCAL && !/^\d{4,6}$/.test(pin)) { msg('join-msg', 'Kies een pincode van 4 cijfers.'); return; }
+        setMe(addPlayer(name, ui.joinEmoji, false, LOCAL ? '' : pin));
       }
       ui.tab = 'holes';
       render(true);
     },
-    'claim'(el) { setMe(el.dataset.id); render(true); },
+    'claim'(el) { if (LOCAL) { setMe(el.dataset.id); render(true); } else sheetClaim(el.dataset.id); },
+    'claim-check'(el) {
+      const pid = el.dataset.id;
+      const p = S.data.players[pid];
+      const pin = val('c-pin');
+      const own = p && p.pin && pinHash(pid, pin) === p.pin;
+      const org = S.data.meta && S.data.meta.pin && hashStr('pg:' + pin) === S.data.meta.pin;
+      if (!p || !(own || org)) { msg('c-msg', 'Die pincode klopt niet.'); return; }
+      setMe(pid);
+      ui.tab = 'holes';
+      closeSheet();
+      render(true);
+    },
     'spectate'() { S.spectator = true; LS.set(NS + 'spec', true); ui.tab = 'board'; render(true); },
     'logout'() { setMe(null); ui.hole = null; render(true); },
     'open-hole'(el) { openHole(el.dataset.id); },
@@ -1548,69 +1763,129 @@
       lastKey = '';
       render(true);
     },
-    'pick-player'(el) { if (!isOrg()) return; ui.pid = el.dataset.id; ui.editing = false; render(true); },
+    'pick-unit'(el) { ui.uid = el.dataset.id; ui.editing = false; render(true); },
     'hole-pin'() { write('meta/current', ui.hole); toast('Iedereen ziet nu deze hole als actief.'); },
     'unpin'() { write('meta/current', null); toast('Actieve hole losgelaten.'); },
     'spin'() { const h = holeById(ui.hole); if (h) doSpin(h); },
     'spin-reset'() {
       const h = holeById(ui.hole);
-      if (!h || !isOrg()) return;
-      const key = spinKey(h, targetPid());
+      if (!h) return;
+      const key = spinKey(h, targetUnit());
       if (!key || !confirm('Deze draai wissen en opnieuw laten draaien?')) return;
       delete ui.wheelRot[h.id + '/' + key];
       write('spins/' + h.id + '/' + key, null);
     },
+    'drink-na'() {
+      // Het getrokken drankje is hier niet te krijgen: het gaat bij deze kroeg van het rad en er mag opnieuw gedraaid worden.
+      const h = holeById(ui.hole);
+      const u = targetUnit();
+      if (!h || h.type !== 'wheel') return;
+      const group = h.wheelMode === 'group';
+      if (!(group ? meP() || isOrg() : canScore(u))) return;
+      const sp = spinOf(h, u);
+      const sc = scoreOf(u, h.id);
+      if (!sp || (sc && sc.done)) return;
+      if (!confirm('"' + sp.label + '" is hier niet te krijgen? Het verdwijnt bij deze kroeg van het rad, iedereen ziet de melding en je mag opnieuw draaien.')) return;
+      const key = spinKey(h, u);
+      delete ui.wheelRot[h.id + '/' + key];
+      write('na/' + h.id + '/' + uid(6), { l: sp.label, by: S.me || '', t: now() });
+      write('spins/' + h.id + '/' + key, null);
+      toast(sp.label + ' is van het rad gehaald. Draai opnieuw.');
+    },
+    'na-del'(el) { write('na/' + ui.hole + '/' + el.dataset.id, null); },
     'sip'(el) {
-      const sc = scoreOf(targetPid(), ui.hole) || {};
+      const u = targetUnit();
+      const sc = scoreOf(u, ui.hole) || {};
+      const by = sc.by || {};
+      const d = +el.dataset.d;
+      let key = scoreKey(u);
+      if (d < 0 && !(+by[key] > 0)) {
+        key = isOrg() ? Object.keys(by).find((k) => +by[k] > 0) : null;
+        if (!key) { if (sipsOf(sc)) toast('Alleen je teamgenoot kan z\'n eigen teugen terugnemen.'); return; }
+      }
+      const fields = { ['by/' + key]: clamp((+by[key] || 0) + d, 0, 99) || null };
+      if (sc.dnf) fields.dnf = null;
       buzz(12);
       ui.bump = true;
-      putScore({ sips: clamp((+sc.sips || 0) + +el.dataset.d, 0, 99), dnf: false });
+      setScore(fields);
     },
-    'sip-set'(el) { buzz(12); ui.bump = true; putScore({ sips: +el.dataset.n, dnf: false }); },
-    'dnf'() { const sc = scoreOf(targetPid(), ui.hole) || {}; putScore({ dnf: !sc.dnf }); },
-    'task'(el) { putScore({ task: el.dataset.v === 'w' ? 'w' : 'l' }); },
+    'sip-set'(el) {
+      // Totaal in één keer zetten: een teamlid past z'n eigen aandeel aan, de organisator overschrijft het totaal.
+      const u = targetUnit();
+      const sc = scoreOf(u, ui.hole) || {};
+      const by = sc.by || {};
+      const n = +el.dataset.n;
+      const key = scoreKey(u);
+      const fields = {};
+      if (key === 'org') {
+        fields.by = { org: n };
+      } else {
+        const others = sipsOf(sc) - (+by[key] || 0);
+        if (n < others) { toast('Je teamgenoot heeft al ' + others + (others === 1 ? ' teug' : ' teugen') + ' geteld.'); return; }
+        fields['by/' + key] = n - others || null;
+      }
+      if (sc.dnf) fields.dnf = null;
+      buzz(12);
+      ui.bump = true;
+      setScore(fields);
+    },
+    'dnf'() { const sc = scoreOf(targetUnit(), ui.hole) || {}; setScore({ dnf: sc.dnf ? null : true }); },
+    'task'(el) { setScore({ task: el.dataset.v === 'w' ? 'w' : 'l' }); },
     'pen-add'(el) {
       const i = +el.dataset.i;
       if (i < 0) { sheetPen(); return; }
       const pn = holePens(holeById(ui.hole)).concat(penList())[i];
       if (!pn) return;
-      const sc = scoreOf(targetPid(), ui.hole) || {};
-      putScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: pn.l, n: +pn.n || 1 }]) });
+      const sc = scoreOf(targetUnit(), ui.hole) || {};
+      setScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: pn.l, n: +pn.n || 1 }]) });
     },
     'pen-custom-save'() {
       const l = val('x-l') || 'Strafslag';
       const n = clamp(+val('x-n') || 1, 1, 20);
-      const sc = scoreOf(targetPid(), ui.hole) || {};
-      putScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: l.slice(0, 30), n }]) });
+      const sc = scoreOf(targetUnit(), ui.hole) || {};
+      setScore({ pens: (sc.pens || []).filter(Boolean).concat([{ l: l.slice(0, 30), n }]) });
       closeSheet();
     },
     'pen-del'(el) {
-      const sc = scoreOf(targetPid(), ui.hole) || {};
+      const sc = scoreOf(targetUnit(), ui.hole) || {};
       const pens = (sc.pens || []).filter(Boolean);
       pens.splice(+el.dataset.i, 1);
-      putScore({ pens });
+      setScore({ pens: pens.length ? pens : null });
     },
     'score-done'() {
-      const pid = targetPid();
+      const u = targetUnit();
       const h = holeById(ui.hole);
-      const sc = scoreOf(pid, ui.hole) || {};
-      if (!h || !(sc.dnf || +sc.sips > 0)) return;
+      const sc = scoreOf(u, ui.hole) || {};
+      if (!h || !(sc.dnf || sipsOf(sc) > 0)) return;
       if (h.task && !sc.task) { toast('Kies eerst of de opdracht gelukt is.'); return; }
-      const first = !sc.done;
+      const info = holeInfo(h, u);
+      if (info.par == null) return;
       ui.editing = false;
-      putScore({ done: true });
-      if (first) {
-        const info = holeInfo(h, pid);
-        const saved = scoreOf(pid, h.id);
-        const st = strokesOf(saved, info.par, h);
-        const term = termFor(saved, st, info.par, h);
-        buzz(term.cls === 'hio' ? [60, 40, 60, 40, 160] : 30);
-        if (term.cls === 'hio') confetti(['🎯', '⛳', '🏆', '✨']); else if (term.cls === 'good') confetti();
-        splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
-      }
+      if (sc.done) { render(true); return; }
+      if (!setScore({ done: true, dt: now(), par: info.par, drink: info.drink || '' })) return;
+      const saved = scoreOf(u, h.id);
+      const st = strokesOf(saved, info.par, h);
+      const term = termFor(saved, st, info.par, h);
+      buzz(term.cls === 'hio' ? [60, 40, 60, 40, 160] : 30);
+      if (term.cls === 'hio') confetti(['🎯', '⛳', '🏆', '✨']); else if (term.cls === 'good') confetti();
+      splash(term.t.replace(' 🎯', ''), term.cls, `${st} ${Math.abs(st) === 1 ? 'slag' : 'slagen'} op par ${info.par} · ${fmtRel(st - info.par)}`);
       render(true);
     },
-    'score-edit'() { ui.editing = true; render(true); },
+    'score-edit'() {
+      const sc = scoreOf(targetUnit(), ui.hole);
+      if (!canScore(targetUnit())) return;
+      if (locked(sc)) { toast('Deze score staat op slot. Vraag de organisator.'); render(true); return; }
+      ui.editing = true;
+      render(true);
+    },
+    'skip'() {
+      const u = targetUnit();
+      const allowed = skipsAllowed(u);
+      if (!allowed || skipsUsed(u) >= allowed) { toast('Je hebt geen holes meer om over te slaan.'); return; }
+      if (!confirm('Deze hole overslaan? Hij telt als par en je hebt er daarna nog ' + (allowed - skipsUsed(u) - 1) + ' over.')) return;
+      if (setScore({ skip: true, done: true, dt: now(), by: null, dnf: null, task: null, pens: null })) toast('Hole overgeslagen');
+    },
+    'unskip'() { ui.editing = false; setScore({ skip: null, done: null, dt: null, ed: null }); },
     'toggle-edit-holes'() { ui.editHoles = !ui.editHoles; render(true); },
     'hole-add'() { sheetHole(null); },
     'hole-edit'(el, ev) { ev.stopPropagation(); sheetHole(el.dataset.id); },
@@ -1630,6 +1905,12 @@
       seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
       if (seg.id === 'c-route') ui.route = el.dataset.v;
       syncSeg();
+    },
+    'tog'(el) {
+      const on = el.dataset.v !== '1';
+      el.dataset.v = on ? '1' : '0';
+      el.classList.toggle('on', on);
+      if (el.id === 'h-off') el.classList.toggle('bad', on);
     },
     'hole-save'(el) {
       const id = el.dataset.id || 'h' + uid(6);
@@ -1661,6 +1942,9 @@
       if (hp.length) doc.hp = hp;
       const note = val('h-note').slice(0, 120);
       if (note) doc.note = note;
+      const off = $('#h-off');
+      if (off && off.dataset.v === '1') doc.off = true;
+      if (doc.off && S.data.meta && S.data.meta.current === id) write('meta/current', null);
       write('holes/' + id, doc);
       closeSheet();
       toast('Kroeg opgeslagen');
@@ -1671,7 +1955,8 @@
       if (!confirm('Deze hole en de scores erop verwijderen?')) return;
       write('holes/' + id, null);
       write('spins/' + id, null);
-      Object.keys(S.data.scores).forEach((pid) => { if (S.data.scores[pid] && S.data.scores[pid][id]) write('scores/' + pid + '/' + id, null); });
+      write('na/' + id, null);
+      Object.keys(S.data.scores).forEach((u) => { if (S.data.scores[u] && S.data.scores[u][id]) write('scores/' + u + '/' + id, null); });
       if (S.data.meta && S.data.meta.current === id) write('meta/current', null);
       if (ui.hole === id) ui.hole = null;
       closeSheet();
@@ -1687,6 +1972,10 @@
       const c = val('s-city').slice(0, 40);
       if (c !== (m.city || '')) write('meta/city', c || null);
       if (dnf !== dnfExtra()) write('meta/dnf', dnf);
+      const solo = clamp(Math.round(+val('s-solo')) || 0, 0, 20);
+      if (solo !== soloSkips()) write('meta/soloSkips', solo);
+      const once = ($('#s-once') || { dataset: { v: '1' } }).dataset.v === '1';
+      if (once !== wheelOnce()) write('meta/wheelOnce', once);
       if (JSON.stringify(pens) !== JSON.stringify(penList())) write('meta/pens', pens.length ? pens : null);
       if (pin) write('meta/pin', hashStr('pg:' + pin));
       closeSheet();
@@ -1698,6 +1987,9 @@
       const name = val('p-name');
       if (!pid || !name) return;
       const me = S.data.players[pid];
+      const pin = val('p-pin');
+      if (pin && !/^\d{4,6}$/.test(pin)) { msg('p-msg', 'Een pincode heeft 4 cijfers.'); return; }
+      if (pin) write('players/' + pid + '/pin', pinHash(pid, pin));
       if (name !== me.name) write('players/' + pid + '/name', name.slice(0, 20));
       if (ui.joinEmoji !== me.emoji) write('players/' + pid + '/emoji', ui.joinEmoji);
       closeSheet();
@@ -1720,7 +2012,7 @@
       write('players/' + pid, null);
       if (S.data.scores[pid]) write('scores/' + pid, null);
       Object.keys(S.data.spins).forEach((hid) => { if (S.data.spins[hid] && S.data.spins[hid][pid]) write('spins/' + hid + '/' + pid, null); });
-      if (ui.pid === pid) ui.pid = null;
+      if (ui.uid === pid) ui.uid = null;
       const row = el.closest('.prow');
       if (row) row.remove();
     },
@@ -1728,6 +2020,7 @@
       if (!confirm('Alle scores en rad-uitslagen van iedereen wissen? Dit kan niet ongedaan worden.')) return;
       write('scores', null);
       write('spins', null);
+      write('na', null);
       write('meta/current', null);
       ui.wheelRot = {};
       toast('Alle scores zijn gewist.');
@@ -1736,12 +2029,38 @@
       if (!confirm('De ' + ROUTE_ZWOLLE.length + ' kroegen van Pubgolf Zwolle laden? Dit vervangt alle kroegen en wist alle scores.')) return;
       write('scores', null);
       write('spins', null);
+      write('na', null);
       write('meta/current', null);
       write('meta/city', ROUTE_CITY);
       write('holes', seedHoles(ROUTE_ZWOLLE));
       ui.wheelRot = {};
       toast('Route Zwolle geladen');
       geoFill(true);
+    },
+    'teams'() { sheetTeams(); },
+    'team-auto'() {
+      const players = playersList();
+      if (players.length < 2) { toast('Er zijn minstens twee spelers nodig.'); return; }
+      const scored = Object.keys(S.data.scores).length > 0;
+      if ((teamsList().length || scored) && !confirm(scored ? 'Er zijn al scores ingevuld. Bij een nieuwe indeling raken die scores los van de teams. Toch opnieuw indelen?' : 'De huidige teams vervangen door een nieuwe willekeurige indeling?')) return;
+      const order = players.map((p) => p.id);
+      for (let i = order.length - 1; i > 0; i--) { const j = randInt(i + 1); const x = order[i]; order[i] = order[j]; order[j] = x; }
+      const teams = {};
+      for (let i = 0; i + 1 < order.length; i += 2) {
+        const tid = 't' + uid(6);
+        teams[tid] = { t: now() + i };
+        write('players/' + order[i] + '/team', tid);
+        write('players/' + order[i + 1] + '/team', tid);
+      }
+      if (order.length % 2) write('players/' + order[order.length - 1] + '/team', null);
+      write('teams', teams);
+      sheetTeams();
+    },
+    'team-del'(el) {
+      const tid = el.dataset.id;
+      playersList().filter((p) => p.team === tid).forEach((p) => write('players/' + p.id + '/team', null));
+      write('teams/' + tid, null);
+      sheetTeams();
     },
     'wheel-edit'() { sheetWheel(); },
     'wheel-save'() {
@@ -1804,11 +2123,25 @@
     const fn = A[el.dataset.act];
     if (!fn) return;
     if (ui.spinning && el.dataset.act !== 'back' && el.dataset.act !== 'tab') return;
+    if (ORG_ONLY.has(el.dataset.act) && !isOrg()) { toast('Dat kan alleen de organisator.'); return; }
     fn(el, ev);
+  });
+  document.addEventListener('change', (ev) => {
+    const el = ev.target;
+    const act = el.dataset ? el.dataset.change : '';
+    if (!act || !isOrg()) return;
+    if (act === 'team-set') {
+      let tid = el.value;
+      if (tid === 'new') { tid = 't' + uid(6); write('teams/' + tid, { t: now() }); }
+      write('players/' + el.dataset.id + '/team', tid || null);
+      sheetTeams();
+    } else if (act === 'team-name') {
+      write('teams/' + el.dataset.id + '/name', el.value.trim().slice(0, 24) || null);
+    }
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' || ev.target.tagName !== 'INPUT') return;
-    const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'n-game': 'new-game-go' };
+    const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'n-game': 'new-game-go', 'in-ppin': 'join', 'c-pin': 'claim-check' };
     const act = enter[ev.target.id];
     if (act) { ev.preventDefault(); const btn = $(`[data-act="${act}"]`); if (btn) btn.click(); }
   });

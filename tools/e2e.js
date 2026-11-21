@@ -44,6 +44,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="create-game"]');
   await a.waitForSelector('#in-name');
   await a.fill('#in-name', 'Sander');
+  await a.fill('#in-ppin', '1111');
   await a.click('.emoji >> nth=3');
   await shot(a, '02-join');
   ok(await a.inputValue('#in-name') === 'Sander', 'naam blijft staan na emoji-keuze');
@@ -59,6 +60,9 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await b.waitForSelector('#in-name');
   ok((await b.textContent('h1')).includes('Pubgolf Zwolle'), 'B ziet de speltitel');
   await b.fill('#in-name', 'Piet');
+  await b.click('[data-act="join"]');
+  ok((await b.textContent('#join-msg')).includes('pincode'), 'meedoen zonder pincode kan niet');
+  await b.fill('#in-ppin', '2222');
   await b.click('[data-act="join"]');
   await b.waitForSelector('.hole');
   ok(await b.locator('.hole').count() === 14, 'B ziet 14 kroegen');
@@ -159,7 +163,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="tab"][data-tab="holes"]');
   await a.click('.hole >> nth=0');
   await a.waitForSelector('.who');
-  await a.click('.who [data-act="pick-player"]:has-text("Kees")');
+  await a.click('.who [data-act="pick-unit"]:has-text("Kees")');
   await a.waitForSelector('.counter');
   await a.click('[data-act="sip-set"][data-n="3"]');
   await a.click('[data-act="score-done"]');
@@ -405,6 +409,7 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="create-game"]');
   await a.waitForSelector('#in-name');
   await a.fill('#in-name', 'Sander');
+  await a.fill('#in-ppin', '1111');
   await a.click('[data-act="join"]');
   await a.waitForSelector('[data-act="hole-add"]');
   ok(await a.locator('.hole').count() === 0, 'nieuw spel begint zonder kroegen');
@@ -418,6 +423,219 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await a.click('[data-act="hole-save"]');
   await a.waitForSelector('.hole');
   ok((await a.textContent('.hole')).includes('Eigen Kroeg') && (await a.textContent('.hole')).includes('Zing het volkslied'), 'eigen kroeg met opdracht toegevoegd');
+
+  // ================= Scenario: vanavond — 7 spelers, drie teams van 2 en één solo =================
+  const G3 = G + 't';
+  const U3 = `${BASE}/?db=${BASE}/db&g=${G3}`;
+  const O = await mk('O'), P = await mk('P'), Q = await mk('Q');
+  const o = O.page, p2 = P.page, q = Q.page;
+  const txt = (page, sel) => page.textContent(sel).then((x) => (x || '').replace(/\s+/g, ' ').trim());
+  const goHole = async (page, n) => { await page.click('[data-act="tab"][data-tab="holes"]'); await sleep(150); await page.click(`.hole >> nth=${n - 1}`); await page.waitForSelector('.hero'); await sleep(150); };
+  const count = (page, want) => page.waitForFunction((w) => { const b = document.querySelector('.cnum b'); return b && b.textContent === w; }, String(want), { timeout: 20000 }).then(() => true).catch(() => false);
+  const forge = (page, act, data) => page.evaluate(([a, d]) => { const b = document.createElement('button'); b.dataset.act = a; Object.assign(b.dataset, d || {}); document.body.appendChild(b); b.click(); b.remove(); }, [act, data || {}]);
+
+  await o.goto(U3);
+  await o.waitForSelector('#in-title');
+  await o.fill('#in-pin', '1234');
+  await o.click('[data-act="create-game"]');
+  await o.waitForSelector('#in-name');
+  await o.fill('#in-name', 'Sander');
+  await o.fill('#in-ppin', '1111');
+  await o.click('[data-act="join"]');
+  await o.waitForSelector('.hole');
+  for (const [page, name, pin] of [[p2, 'Piet', '2222'], [q, 'Lotte', '3333']]) {
+    await page.goto(U3);
+    await page.waitForSelector('#in-name');
+    await page.fill('#in-name', name);
+    await page.fill('#in-ppin', pin);
+    await page.click('[data-act="join"]');
+    await page.waitForSelector('.hole');
+  }
+  // vier spelers zonder eigen telefoon
+  await o.click('[data-act="tab"][data-tab="more"]');
+  await o.click('[data-act="player-add"]');
+  for (const n of ['Emma', 'Daan', 'Bram', 'Kees']) { await o.fill('#a-name', n); await o.click('[data-act="player-add-save"]'); }
+  await o.click('.sheet [data-act="sheet-close"]');
+  await o.waitForFunction(() => !document.querySelector('.sheet'));
+
+  // teams indelen: Sander+Piet, Lotte+Emma, Daan+Bram en Kees solo
+  await o.click('[data-act="teams"]');
+  await o.waitForSelector('select[aria-label="Team van Sander"]');
+  for (const [name, choice] of [['Sander', 'new'], ['Piet', { index: 1 }], ['Lotte', 'new'], ['Emma', { index: 2 }], ['Daan', 'new'], ['Bram', { index: 3 }]]) {
+    await o.selectOption(`select[aria-label="Team van ${name}"]`, choice);
+    await sleep(200);
+  }
+  await shot(o, '30-teams', true);
+  await fits(o, 'teams indelen');
+  await o.click('.sheet [data-act="sheet-close"]');
+  await o.waitForFunction(() => !document.querySelector('.sheet'));
+  await o.click('[data-act="tab"][data-tab="board"]');
+  await o.waitForFunction(() => document.querySelectorAll('[data-flip]').length === 4, null, { timeout: 5000 }).then(() => ok(true, '7 spelers vormen 3 teams en 1 solo')).catch(() => ok(false, '7 spelers vormen 3 teams en 1 solo'));
+  const boardTxt = await txt(o, '.board');
+  ok(['Sander & Piet', 'Lotte & Emma', 'Daan & Bram', 'Kees'].every((n) => boardTxt.includes(n)), 'stand toont de teams en de solospeler');
+
+  // samen één glas: beide teamgenoten tikken, de teugen tellen op
+  await goHole(o, 1);
+  await goHole(p2, 1);
+  ok((await txt(p2, '.score h3')) === 'Score van jullie team', 'teamgenoten delen één score');
+  await o.click('[data-act="sip"][data-d="1"]');
+  await p2.click('[data-act="sip"][data-d="1"]');
+  await o.click('[data-act="sip"][data-d="1"]');
+  await p2.click('[data-act="sip"][data-d="1"]');
+  ok(await count(o, 4) && await count(p2, 4), '2x een kwart en 2x een kwart is samen 4 teugen, op beide telefoons');
+  const who = await txt(o, '.bywho');
+  ok(who.includes('Sander 2') && who.includes('Piet 2'), 'de app laat zien wie hoeveel teugen nam');
+  await shot(o, '31-team-teller', true);
+  await fits(o, 'team-teller');
+  await p2.click('[data-act="sip"][data-d="-1"]');
+  await p2.click('[data-act="sip"][data-d="-1"]');
+  ok(await count(p2, 2) && await p2.isDisabled('[data-act="sip"][data-d="-1"]'), 'je kunt alleen je eigen teugen terugnemen, niet die van je teamgenoot');
+  await p2.click('[data-act="sip"][data-d="1"]');
+  await p2.click('[data-act="sip"][data-d="1"]');
+  await count(p2, 4);
+  await p2.click('[data-act="score-done"]');
+  await p2.waitForSelector('.saved');
+  await o.waitForSelector('.saved', { timeout: 6000 });
+  ok((await txt(o, '.saved-n')) === '4', 'opslaan door één teamgenoot geldt voor het hele team');
+
+  // rechten: een ander team kan er niet aan komen
+  await goHole(q, 1);
+  ok(await q.locator('.who').count() === 0 && await q.locator('[data-act="hole-edit"]').count() === 0, 'een speler ziet geen organisator-knoppen');
+  for (const act of ['reset-scores', 'pick-unit', 'hole-del', 'spin-reset', 'teams', 'settings']) await forge(q, act, { id: 'x' });
+  await sleep(600);
+  ok((await txt(q, '#toasts')).includes('alleen de organisator'), 'organisator-acties worden geweigerd voor spelers');
+  ok(await q.locator('.sheet').count() === 0 && (await txt(o, '.saved-n')) === '4', 'valsspelen via verborgen knoppen lukt niet');
+
+  // op slot: na de correctietijd kan alleen de organisator nog aanpassen
+  ok(await p2.locator('[data-act="score-edit"]').count() === 1, 'kort na het opslaan mag je nog corrigeren');
+  await p2.evaluate(() => { const real = Date.now.bind(Date); Date.now = () => real() + 3 * 60000; });
+  await goHole(p2, 1);
+  await p2.waitForSelector('.saved');
+  ok(await p2.locator('.lock').count() === 1 && await p2.locator('[data-act="score-edit"]').count() === 0, 'daarna staat de score op slot voor spelers');
+  await forge(p2, 'score-edit');
+  await forge(p2, 'sip', { d: '-1' });
+  await forge(p2, 'sip-set', { n: '1' });
+  await sleep(600);
+  ok((await txt(o, '.saved-n')) === '4' && await p2.locator('.counter').count() === 0, 'een score op slot is ook via omwegen niet te verlagen');
+  await o.click('[data-act="score-edit"]');
+  await o.waitForSelector('.counter');
+  await o.click('[data-act="sip-set"][data-n="3"]');
+  await o.click('[data-act="score-done"]');
+  await o.waitForSelector('.saved');
+  ok((await txt(o, '.saved-n')) === '3' && (await txt(o, '.saved')).includes('aangepast door Sander'), 'de organisator kan corrigeren en dat is zichtbaar');
+  await q.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.textContent.includes('Sander & Piet') && r.textContent.includes('aangepast')), null, { timeout: 6000 }).then(() => ok(true, 'andere teams zien dat een score is aangepast')).catch(() => ok(false, 'andere teams zien dat een score is aangepast'));
+
+  // solo: vier holes naar keuze overslaan
+  await goHole(o, 2);
+  await o.click('.who [data-act="pick-unit"]:has-text("Kees")');
+  await sleep(200);
+  ok((await txt(o, '[data-act="skip"]')).includes('nog 4 van 4'), 'de solospeler mag 4 holes overslaan');
+  for (const n of [2, 3, 4, 5]) {
+    if (n > 2) await goHole(o, n);
+    await o.click('[data-act="skip"]');
+    await o.waitForSelector('.saved');
+  }
+  ok((await txt(o, '.saved')).includes('Overgeslagen') && (await txt(o, '.saved')).includes('4 van 4'), 'overgeslagen holes worden bijgehouden');
+  await shot(o, '32-overgeslagen', true);
+  await goHole(o, 6);
+  ok(await o.isDisabled('[data-act="skip"]'), 'na 4 keer overslaan is het op');
+  await o.click('[data-act="sip-set"][data-n="2"]');
+  await o.click('[data-act="score-done"]');
+  await o.waitForSelector('.saved');
+  await o.click('.who [data-act="pick-unit"]:has-text("Daan")');
+  await sleep(200);
+  ok(await o.locator('.counter').count() === 1 && await o.locator('[data-act="skip"]').count() === 0, 'een team van twee kan niet overslaan');
+  await q.click('[data-act="tab"][data-tab="board"]');
+  await q.waitForFunction(() => [...document.querySelectorAll('[data-flip]')].some((r) => r.textContent.includes('Kees') && r.textContent.includes('4 overgeslagen') && r.textContent.includes('5/14')), null, { timeout: 6000 }).then(() => ok(true, 'overgeslagen holes tellen als par en als gespeeld in de stand')).catch(() => ok(false, 'overgeslagen holes tellen als par en als gespeeld in de stand'));
+  await shot(q, '33-stand-teams');
+
+  // het rad: een getrokken drankje verdwijnt, en "is er niet" geeft een nieuwe draai
+  await o.click('[data-act="tab"][data-tab="more"]');
+  await o.click('[data-act="wheel-edit"]');
+  await o.fill('#w-opts', 'Alfa, 2\nBeta, 3\nGamma, 4');
+  await o.click('[data-act="wheel-save"]');
+  await o.waitForFunction(() => !document.querySelector('.sheet'));
+  await o.click('[data-act="tab"][data-tab="holes"]');
+  await o.click('[data-act="toggle-edit-holes"]');
+  for (const n of [7, 9, 10]) {
+    await o.click(`[data-act="hole-edit"] >> nth=${n - 1}`);
+    await o.waitForSelector('#h-type');
+    await o.click('#h-type [data-v="wheel"]');
+    await o.click('[data-act="hole-save"]');
+    await o.waitForFunction(() => !document.querySelector('.sheet'));
+    await sleep(200);
+  }
+  await o.click('[data-act="toggle-edit-holes"]');
+  const spin = async (page) => { await page.click('[data-act="spin"]'); await page.waitForSelector('.spin-result', { timeout: 9000 }); await sleep(300); return (await txt(page, '.spin-result b')).split(' ').slice(1).join(' '); };
+  await goHole(o, 7);
+  ok((await txt(o, '.wheel-legend')).includes('Alfa') && (await txt(o, '.wheel-legend')).includes('Gamma'), 'eerste rad-kroeg: alle drankjes staan erop');
+  const d1 = await spin(o);
+  await goHole(o, 9);
+  ok(!(await txt(o, '.wheel-legend')).includes(d1) && (await txt(o, '.used')).includes(d1), 'een getrokken drankje is van het rad (' + d1 + ')');
+  await shot(o, '34-rad-zonder-gehad', true);
+  const d2 = await spin(o);
+  ok(d2 !== d1, 'tweede draai geeft een ander drankje (' + d2 + ')');
+  await goHole(o, 10);
+  const d3 = await spin(o);
+  ok(d3 !== d1 && d3 !== d2, 'derde draai geeft het laatste drankje (' + d3 + ')');
+  await goHole(q, 10);
+  await o.click('[data-act="drink-na"]');
+  await o.waitForSelector('[data-act="spin"]');
+  ok((await txt(o, '.na')).includes(d3), '"dit drankje is er niet" haalt het bij deze kroeg van het rad');
+  ok((await txt(o, '.wheel-card')).includes('begint opnieuw') && !(await txt(o, '.wheel-legend')).includes(d3), 'is alles op, dan begint het rad opnieuw zonder het ontbrekende drankje');
+  await q.waitForFunction((d) => { const l = document.querySelector('.wheel-legend'); return l && !l.textContent.includes(d); }, d3, { timeout: 6000 }).then(() => ok(true, 'ook andere teams krijgen dat drankje hier niet meer')).catch(() => ok(false, 'ook andere teams krijgen dat drankje hier niet meer'));
+  const d4 = await spin(o);
+  ok(d4 !== d3, 'opnieuw draaien geeft een drankje dat er wel is (' + d4 + ')');
+  ok(await q.locator('[data-act="spin-reset"]').count() === 0 && await o.locator('[data-act="spin-reset"]').count() === 1, 'zomaar opnieuw draaien kan alleen de organisator');
+
+  // inloggen op een ander toestel kan alleen met je eigen pincode
+  const R = await mk('R');
+  const r = R.page;
+  await r.goto(U3);
+  await r.waitForSelector('#in-name');
+  await r.click('.rejoin [data-act="claim"]:has-text("Piet")');
+  await r.waitForSelector('#c-pin');
+  await r.fill('#c-pin', '9999');
+  await r.click('[data-act="claim-check"]');
+  ok((await txt(r, '#c-msg')).includes('klopt niet'), 'andermans naam overnemen lukt niet zonder pincode');
+  await r.fill('#c-pin', '2222');
+  await r.click('[data-act="claim-check"]');
+  await r.waitForSelector('.round');
+  ok((await txt(r, '.round')).includes('Sander & Piet'), 'telefoon leeg: met je pincode log je op een ander toestel weer in');
+  const T = await mk('T');
+  await T.page.goto(U3);
+  await T.page.waitForSelector('#in-name');
+  await T.page.fill('#in-name', 'lotte');
+  await T.page.fill('#in-ppin', '0000');
+  await T.page.click('[data-act="join"]');
+  await T.page.waitForSelector('#c-pin');
+  ok(await T.page.locator('.tabs').count() === 0, 'een tweede keer meedoen onder dezelfde naam vraagt om de pincode');
+
+  // geen bereik: teugen van beide teamgenoten worden later samengevoegd
+  await goHole(o, 11);
+  await o.click('.who [data-act="pick-unit"]:has-text("Sander")');
+  await sleep(200);
+  await goHole(r, 11);
+  await R.ctx.setOffline(true);
+  await r.click('[data-act="sip"][data-d="1"]');
+  await r.click('[data-act="sip"][data-d="1"]');
+  await o.click('[data-act="sip"][data-d="1"]');
+  await sleep(700);
+  ok(await count(o, 1) && /wacht/.test(await txt(r, '.status')), 'zonder bereik blijven de teugen op de telefoon in de wachtrij staan');
+  await R.ctx.setOffline(false);
+  ok(await count(o, 3) && await count(r, 3), 'terug online worden de teugen van beide teamgenoten opgeteld, niets raakt kwijt');
+
+  // een kroeg is dicht: hij vervalt en telt voor niemand mee
+  await goHole(o, 12);
+  await o.click('.hero [data-act="hole-edit"]');
+  await o.waitForSelector('#h-off');
+  await o.click('#h-off');
+  await o.click('[data-act="hole-save"]');
+  await o.waitForFunction(() => !document.querySelector('.sheet'));
+  await q.click('[data-act="tab"][data-tab="holes"]');
+  await q.waitForFunction(() => { const x = document.querySelector('.round'); return x && x.textContent.includes('van 13 holes') && document.querySelectorAll('.hole.off').length === 1; }, null, { timeout: 6000 }).then(() => ok(true, 'kroeg dicht: hij vervalt en telt voor niemand mee')).catch(() => ok(false, 'kroeg dicht: hij vervalt en telt voor niemand mee'));
+  await fits(q, 'holes met vervallen kroeg');
+  await shot(q, '35-holes-team');
 
   console.log(fails ? `\n${fails} FAILS` : '\nALL PASS');
   await browser.close();

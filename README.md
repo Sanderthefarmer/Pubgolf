@@ -2,14 +2,25 @@
 
 Scorekaart-webapp voor een pubgolf: iedereen opent de link op z'n eigen telefoon, vult een naam in en telt per hole z'n teugen. De stand werkt live bij.
 
-- **Kroegen per spel instelbaar**: naam, adres, een vast drankje met par of een **rad** dat je drankje en par bepaalt (ieder draait zelf, of één draai voor de groep).
-- **Het rad zet je vooraf klaar** voor het hele spel (Meer → Het rad instellen); een kroeg kan ook een eigen rad krijgen.
+- **Teams**: een team deelt één glas en één score. Elke teamgenoot tikt op z'n eigen telefoon bij elke teug en de app telt alles op. Wie solo speelt mag een instelbaar aantal holes naar keuze overslaan; een overgeslagen hole telt als par.
+- **Kroegen per spel instelbaar**: naam, adres, een vast drankje met par of een **rad** dat drankje en par bepaalt (elk team draait zelf, of één draai voor de groep).
+- **Het rad zet je vooraf klaar** voor het hele spel. Een getrokken drankje verdwijnt van het rad, en met "dit drankje is er niet" mag je opnieuw draaien zonder dat drankje.
 - **Opdracht per kroeg**, zoals Split the G bij The Dublin House: gelukt gaat van je score af, mislukt komt erbij. Per kroeg kun je ook eigen **straffen** instellen.
-- **Teugen tellen** met een grote +1-knop; in één keer leeg is een hole-in-one. Strafslagen en "niet opgedronken" tellen mee.
 - **Kaart** met de route in volgorde, genummerde punten, je eigen locatie en een navigatieknop per kroeg.
-- **Live stand en scorekaart**, met meldingen als iemand een hole afrondt.
-- **Organisator-modus** (pincode): kroegen aanpassen, de actieve hole kiezen, spelers zonder telefoon toevoegen en scores van anderen invullen.
+- **Live stand en scorekaart**, met meldingen als een team een hole afrondt.
 - Werkt ook met slecht bereik: scores worden op de telefoon bewaard en verstuurd zodra er weer verbinding is.
+
+## Rollen en rechten
+
+| Rol | Kan |
+| --- | --- |
+| **Organisator** (spelpincode) | teams indelen, kroegen en het rad aanpassen, een kroeg laten vervallen, elke score corrigeren, opnieuw laten draaien |
+| **Speler** (naam en eigen pincode) | de score van het eigen team invullen, aan het rad draaien, een drankje als "niet verkrijgbaar" melden |
+| **Toeschouwer** | alleen meekijken |
+
+Een opgeslagen score kan de speler nog twee minuten herstellen (`editMinutes` in `config.js`). Daarna staat hij op slot en kan alleen de organisator hem aanpassen; dat is voor iedereen zichtbaar. Inloggen onder een bestaande naam kan alleen met de pincode van die speler of van de organisator.
+
+Deze regels zitten in de app. De database zelf staat open (test mode), dus iemand met technische kennis kan er rechtstreeks in schrijven. Voor een avond met vrienden is dat genoeg; voor een wedstrijd met vreemden niet.
 
 De standaardroute is Pubgolf Zwolle met 14 kroegen. Bij het aanmaken van een spel kies je die route of begin je leeg.
 
@@ -36,9 +47,12 @@ Zet de bestanden op een statische host. Met GitHub Pages: **Settings → Pages �
 ## Op de avond zelf
 
 1. De organisator opent de site, maakt het spel aan en kiest een pincode.
-2. Op het tabblad **Holes** tik je op **Kroegen bewerken** om per kroeg het drankje, de par, een rad, een opdracht of straffen in te stellen.
-3. Deel de link of QR-code via **Meer → Nodig iedereen uit**.
-4. Bij elke kroeg: open de hole, draai eventueel aan het rad, tel je teugen en tik op **Glas leeg**.
+2. Op het tabblad **Holes** tik je op **Kroegen bewerken** om per kroeg het drankje, de par, een rad, een opdracht of straffen in te stellen. Het rad zelf stel je in via **Meer → Het rad instellen**.
+3. Deel de link of QR-code via **Meer → Nodig iedereen uit**. Iedereen kiest een naam en een pincode van 4 cijfers.
+4. Deel de teams in via **Meer → Teams indelen**, voordat de eerste hole begint. Spelers zonder telefoon voeg je toe via **Speler toevoegen**.
+5. Bij elke kroeg: open de hole, draai eventueel aan het rad, tik bij elke teug en tik op **Glas leeg**.
+
+Onderweg: is een kroeg dicht of te druk, laat hem dan vervallen via **Bewerken**. Is een vast drankje er niet, pas het dan bij de kroeg aan. Telefoon leeg? Log met je naam en pincode in op een ander toestel, of laat je teamgenoot of de organisator tikken.
 
 Een nieuwe avond met een schone lei? Gebruik **Meer → Alle scores wissen**, of start via **Meer → Nieuw spel met eigen kroegen** een spel met een eigen link, eigen kroegen en eigen scores.
 

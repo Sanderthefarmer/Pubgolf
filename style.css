@@ -394,6 +394,27 @@ body.start #fx { display: block; }
 .pr b { font-size: 20px; font-weight: 850; }
 .busy { animation: blink 1.2s infinite; }
 
+/* ---------- teams, rechten en overslaan ---------- */
+.hole.off { opacity: 0.5; }
+.hole.off .hole-name { text-decoration: line-through; }
+.bywho { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -4px 0 14px; }
+.bywho span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); font-size: 13px; color: var(--mut); }
+.bywho span.me { border-color: rgba(255, 197, 61, 0.55); color: var(--txt); }
+.bywho b { color: var(--txt); font-size: 15px; font-variant-numeric: tabular-nums; }
+.saved .bywho { justify-content: flex-start; margin: 0 0 12px; }
+.lock { font-size: 14px; color: var(--mut); background: rgba(0, 0, 0, 0.26); border: 1px solid var(--line); padding: 10px 12px; border-radius: 12px; }
+.score .btn + .btn, .score .btn + p, .score p + .btn { margin-top: 10px; }
+.av.duo, .pod-av.duo { white-space: nowrap; overflow: hidden; }
+.av.duo { font-size: 14px; letter-spacing: -3px; }
+.av.big.duo { font-size: 17px; letter-spacing: -4px; }
+.pod-av.duo { font-size: 20px; letter-spacing: -4px; }
+.pod.p1 .pod-av.duo { font-size: 26px; letter-spacing: -5px; }
+.sel { flex: none; max-width: 58%; min-height: 42px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line2); background: #0c1c15; color: var(--txt); font: inherit; font-size: 15px; }
+input.tname { flex: 1; min-width: 0; width: auto; padding: 10px 12px; font-size: 16px; }
+.cell.skip { color: var(--mut); border: 1.5px dashed var(--line2); border-radius: 7px; }
+.sc .offcol { opacity: 0.4; text-decoration: line-through; }
+.pin.off { background: #a9b2ac; color: #26302a; opacity: 0.75; }
+
 /* ---------- kaart ---------- */
 .map-slot { border-radius: var(--r); overflow: hidden; border: 1px solid var(--line2); background: var(--card); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35); }
 #map { height: min(56vh, 470px); min-height: 300px; position: relative; z-index: 0; background: #dfe7e2; }
