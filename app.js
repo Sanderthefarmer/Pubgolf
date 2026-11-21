@@ -38,9 +38,9 @@
   /** Ga naar een adres binnen de app en laad de pagina echt opnieuw, ook als alleen het #-deel verandert. */
   function goTo(u) {
     const base = (x) => x.split('#')[0];
-    const sameDoc = base(u) === base(location.href);
-    location.href = u;
-    if (sameDoc) location.reload();
+    if (u === location.href) location.reload();
+    else if (base(u) === base(location.href)) { history.pushState(null, '', u); location.reload(); }   // alleen het #-deel wijzigt: adres eerst zetten, dan herladen
+    else location.href = u;
   }
   const restart = () => goTo(location.origin + location.pathname);
   // Lijn-iconen (24×24) voor een strakke, op elk toestel gelijke weergave.
@@ -78,12 +78,14 @@
   const cleanGame = (g) => String(g || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
 
   const CFG_DB = normalizeDb(CFG.db);
-  const CFG_GAME = cleanGame(CFG.game) || 'pubgolf';
+  const CFG_GAME = cleanGame(CFG.game);   // leeg: de link opent de lobby, een spel heeft een eigen code in de link
   const DB = normalizeDb(param('db')) || CFG_DB || normalizeDb(LS.get('pg.db', ''));
   const GAME = cleanGame(param('g')) || CFG_GAME;
   if (param('db') && DB) LS.set('pg.db', DB);
   const LOCAL = DB === 'local';
-  const NS = 'pg.' + hashStr(DB + '|' + GAME) + '.';
+  const nsFor = (game) => 'pg.' + hashStr(DB + '|' + game) + '.';
+  const NS = nsFor(GAME);
+  const gameUrl = (game, path) => DB + '/games/' + game + (path ? '/' + path : '') + '.json';
 
   // ------------------------------------------------------------ defaults
   const DEFAULT_WHEEL = [
@@ -137,7 +139,7 @@
   };
   const ui = {
     tab: 'holes', hole: (history.state && history.state.hole) || null, uid: null, editing: false,
-    editHoles: false, spinning: false, route: 'zwolle', joinEmoji: EMOJIS[randInt(EMOJIS.length)], wheelRot: {}, scroll: {}
+    editHoles: false, spinning: false, wiz: null, joinEmoji: EMOJIS[randInt(EMOJIS.length)], wheelRot: {}, scroll: {}
   };
 
   function setAt(root, path, value) {
@@ -186,7 +188,7 @@
   }
 
   // ------------------------------------------------------------ sync (Firebase REST)
-  const url = (path) => DB + '/games/' + GAME + (path ? '/' + path : '') + '.json';
+  const url = (path) => gameUrl(GAME, path);
 
   async function http(method, path, body) {
     const ctl = new AbortController();
@@ -250,7 +252,7 @@
     afterRemote();
   }
   async function pull() {
-    if (LOCAL || !DB || pulling) return;
+    if (LOCAL || !DB || !GAME || pulling) return;
     pulling = true;
     const started = now();
     lastPullAt = started;
@@ -272,7 +274,7 @@
 
   let es = null, lastEventAt = 0;
   function connect() {
-    if (LOCAL || !DB || typeof EventSource === 'undefined') return;
+    if (LOCAL || !DB || !GAME || typeof EventSource === 'undefined') return;
     if (es) { try { es.close(); } catch (e) { /* negeren */ } es = null; }
     let src;
     try { src = new EventSource(url('')); } catch (e) { return; }
@@ -297,14 +299,14 @@
     };
   }
   function tick() {
-    if (LOCAL || !DB) return;
+    if (LOCAL || !DB || !GAME) return;
     const streamOk = es && es.readyState === 1 && now() - lastEventAt < 75000;
     if (!streamOk && (!es || es.readyState === 2 || now() - lastEventAt > 75000)) connect();
     if (!streamOk || now() - lastPullAt > 30000) pull();
     if (S.outbox.length) flush();
   }
   function resync() {
-    if (LOCAL || !DB) return;
+    if (LOCAL || !DB || !GAME) return;
     connect();
     pull();
     flush();
@@ -781,7 +783,7 @@
     write('holes/' + id + '/lng', g.lng);
     return true;
   }
-  let geoBusy = false;
+  let geoBusy = false, geoAuto = false;
   async function geoFill(quiet) {
     if (geoBusy) return;
     geoBusy = true;
@@ -843,36 +845,174 @@
       <button class="btn ghost" data-act="change-db">Andere database kiezen</button>` : ''}
     </div>`;
   }
-  const localCopy = () => {
-    if (LOCAL) return null;
-    const d = LS.get('pg.' + hashStr('local|' + GAME) + '.data', null);
-    return d && d.meta && d.holes ? d : null;
-  };
-  function viewCreate() {
-    const lc = localCopy();
+  const gameCode = () => { const abc = 'abcdefghjkmnpqrstuvwxyz23456789'; let c = ''; for (let i = 0; i < 5; i++) c += abc[randInt(abc.length)]; return c; };
+  function openGame(code) {
+    const q = [];
+    if (LOCAL) q.push('db=local'); else if (DB !== CFG_DB) q.push('db=' + encodeURIComponent(DB));
+    q.push('g=' + code);
+    goTo(location.origin + location.pathname + '#' + q.join('&'));
+  }
+  /** Onthoudt op dit toestel welke spellen je opende, zodat de lobby ze kan tonen. */
+  let remembered = '';
+  function rememberGame() {
+    if (!GAME || !S.data.meta || remembered === title()) return;
+    remembered = title();
+    const list = (LS.get('pg.recent', []) || []).filter((x) => x && !(x.g === GAME && x.db === DB));
+    list.unshift({ g: GAME, db: DB, t: remembered, at: now() });
+    LS.set('pg.recent', list.slice(0, 8));
+  }
+  function viewLobby() {
+    const recent = (LS.get('pg.recent', []) || []).filter((x) => x && x.db === DB && x.g).slice(0, 5);
     return `<div class="center-screen">
       <div class="logo">⛳</div>
-      <h1>Nieuw spel</h1>
-      <p class="mut">Er is nog geen spel${GAME !== CFG_GAME ? ' met de naam “' + esc(GAME) + '”' : ''}. Maak het aan, daarna kan iedereen meedoen via de link.</p>
-      <label class="field"><span>Naam van het spel</span>
-        <input id="in-title" type="text" maxlength="40" value="Pubgolf Zwolle"></label>
-      <div class="field"><span>Kroegen</span>
-        <div class="seg" id="c-route" data-v="${ui.route}">
-          <button data-act="seg" data-v="zwolle" class="${ui.route === 'empty' ? '' : 'on'}">Zwolle · ${ROUTE_ZWOLLE.length} kroegen</button>
-          <button data-act="seg" data-v="empty" class="${ui.route === 'empty' ? 'on' : ''}">Zelf invullen</button></div></div>
-      ${LOCAL ? '' : `<label class="field"><span>Organisator-pincode (voor kroegen aanpassen)</span>
-        <input id="in-pin" type="text" inputmode="numeric" maxlength="8" placeholder="bijv. 1234" autocomplete="off"></label>`}
-      <button class="btn big" data-act="create-game">Spel aanmaken</button>
-      ${lc ? `<button class="btn ghost" data-act="create-from-local">Neem het lokale spel van dit toestel over (${Object.keys(lc.holes).length} holes)</button>` : ''}
-      <p id="create-msg" class="msg"></p>
-      ${LOCAL ? '<button class="btn ghost" data-act="change-db">Toch een database koppelen</button>' : ''}
+      <h1>Pubgolf</h1>
+      <p class="mut">Start een eigen spel, of doe mee met de spelcode die je van de organisator kreeg.</p>
+      <button class="btn big" data-act="lobby-new">Nieuw spel starten</button>
+      <div class="or"><span>of</span></div>
+      <label class="field"><span>Spelcode</span>
+        <input id="in-code" type="text" maxlength="12" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="bijv. ZW7KQ"></label>
+      <button class="btn ghost" data-act="lobby-join">Meedoen met deze code</button>
+      <p id="lobby-msg" class="msg"></p>
+      ${recent.length ? `<div class="rejoin"><p class="mut">Eerder op dit toestel:</p>
+        <div class="stack">${recent.map((x) => `<button class="btn ghost" data-act="lobby-open" data-g="${esc(x.g)}">${esc(x.t || 'Pubgolf')}<span class="code">${esc(x.g.toUpperCase())}</span></button>`).join('')}</div></div>` : ''}
+      ${CFG_DB ? '' : `<button class="linkbtn" data-act="change-db">${LOCAL ? 'Database koppelen' : 'Andere database'}</button>`}
     </div>`;
   }
+  function viewMissing() {
+    return `<div class="center-screen">
+      <div class="logo">⛳</div>
+      <h1>Spel niet gevonden</h1>
+      <p class="mut">Er is geen spel met de code <b>${esc(GAME.toUpperCase())}</b>. Controleer de link of de code, of start zelf een spel.</p>
+      <button class="btn big" data-act="to-lobby">Naar de lobby</button>
+      <button class="btn ghost" data-act="retry">Opnieuw proberen</button>
+    </div>`;
+  }
+
+  // Nieuw spel aanmaken in stappen: spel, kroegen, drankjes, het rad, overzicht.
+  const WIZ_STEPS = ['Het spel', 'Kroegen', 'Drankjes', 'Het rad', 'Overzicht'];
+  function wizInit() {
+    ui.wiz = {
+      step: 0, title: 'Pubgolf Zwolle', pin: '', once: true, nn: '', na: '', busy: false, msg: '',
+      pubs: ROUTE_ZWOLLE.map((h) => Object.assign({ on: true, type: 'fixed', drink: '', par: 3 }, clone(h))),
+      wheel: clone(DEFAULT_WHEEL)
+    };
+  }
+  const wizWheel = () => ui.wiz.wheel.map((o) => ({ label: String(o.label || '').trim().slice(0, 30), par: clamp(Math.round(+o.par) || 1, 1, 20) })).filter((o) => o.label);
+  const stepper = (what, i, n) => `<div class="stepper"><button data-act="wiz" data-do="${what}" data-i="${i}" data-d="-1" aria-label="Par omlaag">−</button>
+    <span><small>par</small><b>${n}</b></span><button data-act="wiz" data-do="${what}" data-i="${i}" data-d="1" aria-label="Par omhoog">+</button></div>`;
+  function viewWizard() {
+    const w = ui.wiz;
+    const chosen = w.pubs.map((pub, i) => ({ pub, i })).filter((x) => x.pub.on);
+    const onWheel = chosen.filter((x) => x.pub.type === 'wheel');
+    let body = '';
+    if (w.step === 0) {
+      body = `<p class="mut">Geef je spel een naam. Je krijgt daarna een spelcode en een link om te delen.</p>
+        <label class="field"><span>Naam van het spel</span><input type="text" maxlength="40" data-w="title" value="${esc(w.title)}"></label>
+        ${LOCAL ? '' : `<label class="field"><span>Organisator-pincode</span><input type="text" inputmode="numeric" maxlength="8" autocomplete="off" data-w="pin" value="${esc(w.pin)}" placeholder="bijv. 1234"></label>`}
+        <div class="card note"><b>Jij wordt de organisator.</b> Alleen jij kunt straks kroegen, teams en het rad aanpassen en scores corrigeren. De rest doet mee met een eigen naam en telt alleen de teugen van het eigen team, of kijkt mee.</div>`;
+    } else if (w.step === 1) {
+      let k = 0;
+      body = `<p class="mut">Vink de kroegen aan die meedoen en zet ze met de pijltjes in de goede volgorde.</p>
+        <div class="rowbar between"><span class="mut small"><b>${chosen.length}</b> van ${w.pubs.length} gekozen</span>
+          <span class="chips"><button class="chip" data-act="wiz" data-do="all">Alles</button><button class="chip" data-act="wiz" data-do="none">Geen</button></span></div>
+        <div class="wlist">${w.pubs.map((pub, i) => `<div class="wrow ${pub.on ? 'on' : ''}">
+          <button class="wmain" data-act="wiz" data-do="tog" data-i="${i}" aria-pressed="${pub.on ? 'true' : 'false'}">
+            <span class="check">${pub.on ? ++k : ''}</span>
+            <span class="pn"><b>${esc(pub.name)}</b><small>${esc(pub.addr || 'geen adres')}</small></span></button>
+          <button class="mini" data-act="wiz" data-do="up" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Omhoog">${ico('up')}</button>
+          <button class="mini" data-act="wiz" data-do="down" data-i="${i}" ${i === w.pubs.length - 1 ? 'disabled' : ''} aria-label="Omlaag">${ico('down')}</button></div>`).join('')}</div>
+        <div class="card"><h3>Eigen kroeg toevoegen</h3>
+          <label class="field"><span>Naam</span><input type="text" maxlength="40" data-w="nn" value="${esc(w.nn)}" placeholder="Naam van de kroeg"></label>
+          <label class="field"><span>Adres (voor de kaart)</span><input type="text" maxlength="80" data-w="na" value="${esc(w.na)}" placeholder="bijv. Melkmarkt 37"></label>
+          <button class="btn ghost" data-act="wiz" data-do="add">+ Toevoegen aan de route</button></div>`;
+    } else if (w.step === 2) {
+      body = `<p class="mut">Kies per kroeg een vast drankje met par, of laat het rad beslissen.</p>
+        <div class="rowbar"><span class="chips"><button class="chip" data-act="wiz" data-do="allfixed">Alles vast</button><button class="chip" data-act="wiz" data-do="allwheel">Alles op het rad</button></span></div>
+        ${chosen.map((x, k) => `<div class="card wpub">
+          <div class="wpub-h"><span class="rt-no">${k + 1}</span><b>${esc(x.pub.name)}</b></div>
+          <div class="seg"><button data-act="wiz" data-do="type" data-i="${x.i}" data-v="fixed" class="${x.pub.type === 'wheel' ? '' : 'on'}">🍺 Vast drankje</button>
+            <button data-act="wiz" data-do="type" data-i="${x.i}" data-v="wheel" class="${x.pub.type === 'wheel' ? 'on' : ''}">🎡 Rad</button></div>
+          ${x.pub.type === 'wheel' ? '<p class="mut small">Het rad bepaalt hier het drankje en de par.</p>'
+            : `<div class="wfix"><input type="text" maxlength="30" data-w="p.${x.i}.drink" value="${esc(x.pub.drink || '')}" placeholder="Drankje naar keuze" aria-label="Drankje bij ${esc(x.pub.name)}">${stepper('par', x.i, clamp(+x.pub.par || 3, 1, 20))}</div>`}
+          ${x.pub.task ? `<p class="hole-task">🎯 Opdracht: ${esc(x.pub.task)} · gelukt ${fmtMod(+x.pub.win || 0)}, mislukt ${fmtMod(+x.pub.lose || 0)}</p>` : ''}
+        </div>`).join('')}`;
+    } else if (w.step === 3) {
+      body = `<p class="mut">${onWheel.length ? 'Het rad geldt bij: ' + esc(onWheel.map((x) => x.pub.name).join(', ')) + '.' : 'Geen enkele kroeg gebruikt nu het rad. Je kunt doorgaan; het rad is later ook nog aan te passen.'}</p>
+        <div class="wheel-box small" id="wiz-prev">${wheelPreview(wizWheel())}</div>
+        <div class="wlist">${w.wheel.map((o, i) => `<div class="wrow on"><input type="text" maxlength="30" data-w="w.${i}.label" value="${esc(o.label || '')}" placeholder="Drankje" aria-label="Drankje ${i + 1} op het rad">
+          ${stepper('wpar', i, clamp(Math.round(+o.par) || 1, 1, 20))}
+          <button class="mini danger" data-act="wiz" data-do="wdel" data-i="${i}" aria-label="Verwijder">✕</button></div>`).join('')}</div>
+        <button class="btn ghost" data-act="wiz" data-do="wadd">+ Drankje op het rad</button>
+        <button class="chip wide ${w.once ? 'on' : ''}" data-act="wiz" data-do="once">Een getrokken drankje verdwijnt van het rad</button>`;
+    } else {
+      const wh = wizWheel();
+      body = `<p class="mut">Klopt het zo? Alles is na het aanmaken nog aan te passen.</p>
+        <div class="card"><h3>${esc(w.title || 'Pubgolf')}</h3>
+          <p class="mut small">${chosen.length} ${chosen.length === 1 ? 'kroeg' : 'kroegen'} · ${chosen.length - onWheel.length} met een vast drankje · ${onWheel.length} met het rad</p>
+          <div class="sum">${chosen.map((x, k) => `<div><span class="rt-no">${k + 1}</span><span class="pn"><b>${esc(x.pub.name)}</b>
+            <small>${x.pub.type === 'wheel' ? '🎡 Het rad' : esc((x.pub.drink || '').trim() || 'Drankje naar keuze') + ' · par ' + clamp(+x.pub.par || 3, 1, 20)}${x.pub.task ? ' · 🎯 ' + esc(x.pub.task) : ''}</small></span></div>`).join('')}</div>
+          ${onWheel.length ? `<p class="mut small">Op het rad: ${wh.map((o) => esc(o.label) + ' (par ' + o.par + ')').join(', ')}.${w.once ? ' Een getrokken drankje verdwijnt.' : ''}</p>` : ''}</div>`;
+    }
+    return `<div class="wiz">
+      <div class="wiz-top"><button class="icon" data-act="wiz" data-do="back">${ico('back')}${w.step ? 'Terug' : 'Lobby'}</button><span>Stap ${w.step + 1} van ${WIZ_STEPS.length}</span></div>
+      <div class="steps">${WIZ_STEPS.map((x, i) => `<i class="${i <= w.step ? 'on' : ''}"></i>`).join('')}</div>
+      <h1>${WIZ_STEPS[w.step]}</h1>
+      ${body}
+      <div class="wiz-nav"><p id="wiz-msg" class="msg">${esc(w.msg || '')}</p>
+        <button class="btn big" data-act="wiz" data-do="${w.step === WIZ_STEPS.length - 1 ? 'create' : 'next'}" ${w.busy ? 'disabled' : ''}>${w.step === WIZ_STEPS.length - 1 ? 'Spel aanmaken' : 'Volgende: ' + WIZ_STEPS[w.step + 1].toLowerCase()}</button></div>
+    </div>`;
+  }
+  async function wizCreate() {
+    const w = ui.wiz;
+    if (!w || w.busy) return;
+    const fail = (text) => { w.busy = false; w.msg = text; render(true); };
+    w.busy = true; w.msg = 'Spel aanmaken…';
+    render(true);
+    try {
+      let code = '';
+      for (let k = 0; k < 6 && !code; k++) {
+        const c = gameCode();
+        if (LOCAL) { if (!LS.get(nsFor(c) + 'data', null)) code = c; continue; }
+        const res = await fetch(gameUrl(c, 'meta/created'), { cache: 'no-store' });
+        if (!res.ok) return fail(httpError(res.status));
+        if ((await res.json()) == null) code = c;
+      }
+      if (!code) return fail('Geen vrije spelcode gevonden. Probeer het opnieuw.');
+      const holes = {};
+      w.pubs.filter((pub) => pub.on).forEach((pub, i) => {
+        const h = { order: i + 1, name: String(pub.name || '').trim().slice(0, 40) || 'Kroeg', type: pub.type === 'wheel' ? 'wheel' : 'fixed' };
+        if (h.type === 'wheel') h.wheelMode = 'player';
+        else { h.drink = String(pub.drink || '').trim().slice(0, 30) || 'Drankje naar keuze'; h.par = clamp(Math.round(+pub.par) || 3, 1, 20); }
+        if (pub.addr) h.addr = String(pub.addr).slice(0, 80);
+        if (hasGeo(pub)) { h.lat = +pub.lat; h.lng = +pub.lng; }
+        if (pub.task) { h.task = pub.task; h.win = +pub.win || 0; h.lose = +pub.lose || 0; }
+        holes['h' + uid(6)] = h;
+      });
+      const wheel = wizWheel();
+      const data = {
+        meta: { title: String(w.title || '').trim().slice(0, 40) || 'Pubgolf', pin: LOCAL ? '' : hashStr('pg:' + w.pin), dnf: 3, soloSkips: 4,
+          pens: DEFAULT_PENS, wheel: wheel.length >= 2 ? wheel : DEFAULT_WHEEL, wheelOnce: !!w.once, city: ROUTE_CITY, created: now() },
+        holes
+      };
+      if (LOCAL) LS.set(nsFor(code) + 'data', data);
+      else {
+        const res = await fetch(gameUrl(code, ''), { method: 'PUT', body: JSON.stringify(data) });
+        if (!res.ok) return fail(httpError(res.status));
+      }
+      LS.set(nsFor(code) + 'org', true);   // wie het spel aanmaakt is de organisator
+      ui.wiz = null;
+      openGame(code);
+    } catch (e) {
+      fail('Geen verbinding met de database. Probeer het opnieuw.');
+    }
+  }
+
   function viewJoin() {
     const players = playersList();
     return `<div class="center-screen join">
       <div class="logo">⛳</div>
       <h1>${esc(title())}</h1>
+      <p class="gcode">Spelcode <b>${esc(GAME.toUpperCase())}</b></p>
       <p class="mut">Vul je naam in${LOCAL ? '' : ', kies een pincode'} en kies een poppetje.</p>
       <label class="field"><span>Je naam</span>
         <input id="in-name" type="text" maxlength="20" autocomplete="given-name" autocapitalize="words" placeholder="Naam"></label>
@@ -1228,7 +1368,7 @@
   function shareUrl() {
     const p = [];
     if (!LOCAL && DB && DB !== CFG_DB) p.push('db=' + encodeURIComponent(DB));
-    if (GAME !== CFG_GAME) p.push('g=' + GAME);
+    if (GAME && GAME !== CFG_GAME) p.push('g=' + GAME);
     return location.origin + location.pathname + (p.length ? '#' + p.join('&') : '');
   }
   function qrSvg(text) {
@@ -1250,7 +1390,8 @@
         <button class="btn ghost" data-act="change-db">Database koppelen</button></section>`;
     } else {
       html += `<section class="card invite"><h3>Nodig iedereen uit</h3>
-        <p class="mut small">Laat de QR-code scannen of deel de link in de groepsapp.</p>
+        <p class="gcode">Spelcode <b>${esc(GAME.toUpperCase())}</b></p>
+        <p class="mut small">Laat de QR-code scannen, deel de link in de groepsapp, of laat iedereen de spelcode invullen in de lobby.</p>
         <div class="qr">${qrSvg(link)}</div>
         <div class="link">${esc(link)}</div>
         <div class="btnrow"><button class="btn" data-act="share">Deel link</button><button class="btn ghost" data-act="copy">Kopieer</button></div></section>`;
@@ -1290,8 +1431,6 @@
           <button class="btn ghost" data-act="player-add">Speler toevoegen (zonder telefoon)</button>
           <button class="btn ghost" data-act="players">Spelers beheren</button>
           <button class="btn ghost" data-act="unpin">Actieve hole loslaten</button>
-          <button class="btn ghost" data-act="route-load">Route Zwolle laden (${ROUTE_ZWOLLE.length} kroegen)</button>
-          <button class="btn ghost" data-act="new-game">Nieuw spel met eigen kroegen</button>
           <button class="btn ghost danger" data-act="reset-scores">Alle scores wissen</button>
           ${LOCAL ? '' : '<button class="btn ghost" data-act="org-off">Organisator-modus uit</button>'}
         </div>`;
@@ -1302,8 +1441,8 @@
     const st = statusInfo();
     html += `<section class="card"><h3>Verbinding</h3>
       <p class="mut small">${LOCAL ? 'Lokaal spel, alles blijft op dit toestel.' : `Status: <b>${st.txt}</b>${S.err ? ' · ' + esc(S.err) : ''}. Scores die je zonder bereik invult worden bewaard en verstuurd zodra er weer verbinding is.`}</p>
-      <div class="btnrow"><button class="btn ghost" data-act="reload">Ververs</button>${LOCAL || CFG_DB ? '' : '<button class="btn ghost" data-act="change-db">Andere database</button>'}</div>
-      <p class="mut tiny">Spel: ${esc(GAME)}</p></section>`;
+      <div class="btnrow"><button class="btn ghost" data-act="reload">Ververs</button><button class="btn ghost" data-act="to-lobby">Naar de lobby</button></div>
+      <p class="mut tiny">Spelcode: ${esc(GAME.toUpperCase())}. In de lobby start je een nieuw spel of open je een ander spel.</p></section>`;
     return html;
   }
 
@@ -1344,8 +1483,9 @@
 
     let key;
     if (!DB) key = 'setup';
+    else if (!GAME) key = ui.wiz ? 'wiz:' + ui.wiz.step : 'lobby';
     else if (!S.loaded && !S.data.meta) key = 'loading';
-    else if (!S.data.meta) key = 'create';
+    else if (!S.data.meta) key = 'missing';
     else if (!meP() && !S.spectator) key = 'join';
     else {
       if (ui.hole && !S.data.holes[ui.hole]) ui.hole = null;
@@ -1353,7 +1493,13 @@
     }
     // Op het kaart-tabblad alleen de punten bijwerken, zodat de kaart niet verspringt terwijl je sleept.
     if (!force && key === 'tab:map' && lastKey === key && map && mapEl && mapEl.isConnected) { syncMap(); paintStatus(); return; }
-    const html = key === 'setup' ? viewSetup() : key === 'loading' ? viewLoading() : key === 'create' ? viewCreate() : key === 'join' ? viewJoin() : viewMain();
+    const html = key === 'setup' ? viewSetup() : key === 'lobby' ? viewLobby() : key.startsWith('wiz:') ? viewWizard() : key === 'loading' ? viewLoading()
+      : key === 'missing' ? viewMissing() : key === 'join' ? viewJoin() : viewMain();
+    if (key === 'join' || key.startsWith('tab:') || key.startsWith('hole:')) {
+      rememberGame();
+      // De organisator zoekt ontbrekende adressen één keer automatisch op voor de kaart.
+      if (!geoAuto && isOrg() && holesList().some((h) => h.addr && !hasGeo(h))) { geoAuto = true; setTimeout(() => geoFill(true), 300); }
+    }
     const fresh = key !== lastKey;
 
     const keep = {};
@@ -1369,7 +1515,7 @@
     if (key === 'tab:map') mountMap();
     document.body.classList.toggle('start', !key.startsWith('tab:') && !key.startsWith('hole:'));
     if (fresh) {
-      const view = app.querySelector('.view, .center-screen');
+      const view = app.querySelector('.view, .center-screen, .wiz');
       if (view) view.classList.add('enter');
       window.scrollTo(0, key.startsWith('tab:') ? ui.scroll[key] || 0 : 0);
       lastKey = key;
@@ -1593,16 +1739,6 @@
       <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
     setTimeout(() => { const el = $('#c-pin'); if (el) el.focus(); }, 50);
   }
-  function sheetNewGame() {
-    openSheet(`<h2>Nieuw spel</h2>
-      <p class="mut small">Elk spel heeft z'n eigen kroegen, spelers en scores, en een eigen link. Het huidige spel blijft bestaan.</p>
-      <label class="field"><span>Korte naam voor in de link (letters, cijfers, streepjes)</span>
-        <input id="n-game" type="text" maxlength="30" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bijv. zwolle-december"></label>
-      <p id="n-msg" class="msg"></p>
-      <button class="btn big" data-act="new-game-go">Open nieuw spel</button>
-      <button class="btn ghost" data-act="sheet-close">Annuleren</button>`);
-    setTimeout(() => { const el = $('#n-game'); if (el) el.focus(); }, 50);
-  }
   function sheetPen() {
     openSheet(`<h2>Strafslag</h2>
       <label class="field"><span>Waarvoor?</span><input id="x-l" type="text" maxlength="30" placeholder="bijv. Te hard gelachen"></label>
@@ -1654,8 +1790,8 @@
   }
   // Alleen de organisator mag deze acties uitvoeren, ook als iemand de knop op een andere manier weet te bereiken.
   const ORG_ONLY = new Set(['hole-pin', 'unpin', 'spin-reset', 'na-del', 'toggle-edit-holes', 'hole-add', 'hole-edit', 'hole-move', 'hole-save', 'hole-del',
-    'settings', 'settings-save', 'player-add', 'player-add-save', 'players', 'player-del', 'reset-scores', 'route-load', 'wheel-edit', 'wheel-save',
-    'new-game', 'new-game-go', 'teams', 'team-auto', 'team-del', 'pick-unit', 'geo-all']);
+    'settings', 'settings-save', 'player-add', 'player-add-save', 'players', 'player-del', 'reset-scores', 'wheel-edit', 'wheel-save',
+    'teams', 'team-auto', 'team-del', 'pick-unit', 'geo-all']);
 
   const A = {
     'tab'(el) {
@@ -1687,36 +1823,55 @@
       restart();
     },
     'use-local'() { LS.set('pg.db', 'local'); restart(); },
-    'create-game'() {
-      const t = val('in-title') || 'Pubgolf';
-      const pin = val('in-pin');
-      if (!LOCAL && pin.length < 3) { msg('create-msg', 'Kies een pincode van minstens 3 tekens.'); return; }
-      const zwolle = ui.route !== 'empty';
-      const meta = { title: t.slice(0, 40), pin: pin ? hashStr('pg:' + pin) : '', dnf: 3, pens: DEFAULT_PENS, wheel: DEFAULT_WHEEL, created: now() };
-      if (zwolle) meta.city = ROUTE_CITY;
-      write('meta', meta);
-      if (zwolle) write('holes', seedHoles(ROUTE_ZWOLLE));
-      setOrg(true);
-      render(true);
-      if (zwolle) geoFill(true);
+    'lobby-new'() { wizInit(); history.pushState({ wz: 0 }, ''); render(true); },
+    async 'lobby-join'(el) {
+      const code = cleanGame(val('in-code'));
+      if (code.length < 2) { msg('lobby-msg', 'Vul de spelcode in.'); return; }
+      el.disabled = true;
+      msg('lobby-msg', 'Zoeken…');
+      try {
+        let found;
+        if (LOCAL) found = !!LS.get(nsFor(code) + 'data', null);
+        else {
+          const res = await fetch(gameUrl(code, 'meta/created'), { cache: 'no-store' });
+          if (!res.ok) { msg('lobby-msg', httpError(res.status)); el.disabled = false; return; }
+          found = (await res.json()) != null;
+        }
+        if (!found) { msg('lobby-msg', 'Geen spel gevonden met code ' + code.toUpperCase() + '.'); el.disabled = false; return; }
+        openGame(code);
+      } catch (e) { msg('lobby-msg', 'Geen verbinding met de database.'); el.disabled = false; }
     },
-    'create-from-local'() {
-      const lc = localCopy();
-      const pin = val('in-pin');
-      if (!lc) return;
-      if (pin.length < 3) { msg('create-msg', 'Kies eerst een pincode van minstens 3 tekens.'); return; }
-      const d = norm(clone(lc));
-      d.meta.pin = hashStr('pg:' + pin);
-      write('meta', d.meta);
-      write('holes', d.holes);
-      if (Object.keys(d.players).length) write('players', d.players);
-      if (Object.keys(d.teams).length) write('teams', d.teams);
-      if (Object.keys(d.scores).length) write('scores', d.scores);
-      if (Object.keys(d.spins).length) write('spins', d.spins);
-      if (Object.keys(d.na).length) write('na', d.na);
-      const me = LS.get('pg.' + hashStr('local|' + GAME) + '.me', null);
-      if (me && d.players[me]) setMe(me);
-      setOrg(true);
+    'lobby-open'(el) { openGame(cleanGame(el.dataset.g)); },
+    'to-lobby'() { restart(); },
+    'wiz'(el) {
+      const w = ui.wiz;
+      if (!w || w.busy) return;
+      const act = el.dataset.do;
+      const i = +el.dataset.i;
+      w.msg = '';
+      if (act === 'back') { history.back(); return; }
+      if (act === 'create') { wizCreate(); return; }
+      if (act === 'next') {
+        if (w.step === 0 && !LOCAL && String(w.pin).trim().length < 3) w.msg = 'Kies een pincode van minstens 3 tekens.';
+        else if (w.step === 1 && !w.pubs.some((x) => x.on)) w.msg = 'Kies minstens één kroeg.';
+        else if (w.step === 3 && w.pubs.some((x) => x.on && x.type === 'wheel') && wizWheel().length < 2) w.msg = 'Zet minstens twee drankjes op het rad.';
+        else { w.step++; history.pushState({ wz: w.step }, ''); }
+      } else if (act === 'tog') w.pubs[i].on = !w.pubs[i].on;
+      else if (act === 'all' || act === 'none') w.pubs.forEach((x) => { x.on = act === 'all'; });
+      else if (act === 'up' || act === 'down') {
+        const j = i + (act === 'up' ? -1 : 1);
+        if (j >= 0 && j < w.pubs.length) { const x = w.pubs[i]; w.pubs[i] = w.pubs[j]; w.pubs[j] = x; }
+      } else if (act === 'add') {
+        const name = String(w.nn || '').trim();
+        if (!name) w.msg = 'Vul de naam van de kroeg in.';
+        else { w.pubs.push({ on: true, type: 'fixed', drink: '', par: 3, name: name.slice(0, 40), addr: String(w.na || '').trim().slice(0, 80) }); w.nn = ''; w.na = ''; }
+      } else if (act === 'type') w.pubs[i].type = el.dataset.v === 'wheel' ? 'wheel' : 'fixed';
+      else if (act === 'allfixed' || act === 'allwheel') w.pubs.forEach((x) => { if (x.on) x.type = act === 'allwheel' ? 'wheel' : 'fixed'; });
+      else if (act === 'par') w.pubs[i].par = clamp((+w.pubs[i].par || 3) + +el.dataset.d, 1, 20);
+      else if (act === 'wpar') w.wheel[i].par = clamp((Math.round(+w.wheel[i].par) || 1) + +el.dataset.d, 1, 20);
+      else if (act === 'wdel') w.wheel.splice(i, 1);
+      else if (act === 'wadd') w.wheel.push({ label: '', par: 3 });
+      else if (act === 'once') w.once = !w.once;
       render(true);
     },
     'pick-emoji'(el) {
@@ -1903,7 +2058,6 @@
       const seg = el.parentNode;
       seg.dataset.v = el.dataset.v;
       seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
-      if (seg.id === 'c-route') ui.route = el.dataset.v;
       syncSeg();
     },
     'tog'(el) {
@@ -2025,18 +2179,6 @@
       ui.wheelRot = {};
       toast('Alle scores zijn gewist.');
     },
-    'route-load'() {
-      if (!confirm('De ' + ROUTE_ZWOLLE.length + ' kroegen van Pubgolf Zwolle laden? Dit vervangt alle kroegen en wist alle scores.')) return;
-      write('scores', null);
-      write('spins', null);
-      write('na', null);
-      write('meta/current', null);
-      write('meta/city', ROUTE_CITY);
-      write('holes', seedHoles(ROUTE_ZWOLLE));
-      ui.wheelRot = {};
-      toast('Route Zwolle geladen');
-      geoFill(true);
-    },
     'teams'() { sheetTeams(); },
     'team-auto'() {
       const players = playersList();
@@ -2069,16 +2211,6 @@
       write('meta/wheel', opts);
       closeSheet();
       toast('Rad opgeslagen');
-    },
-    'new-game'() { sheetNewGame(); },
-    'new-game-go'() {
-      const g = cleanGame(val('n-game').replace(/\s+/g, '-'));
-      if (g.length < 2) { msg('n-msg', 'Kies een naam van minstens 2 tekens.'); return; }
-      if (g === GAME) { msg('n-msg', 'Dat is het spel waar je nu in zit.'); return; }
-      const p = [];
-      if (LOCAL) p.push('db=local'); else if (DB !== CFG_DB) p.push('db=' + encodeURIComponent(DB));
-      p.push('g=' + g);
-      goTo(location.origin + location.pathname + '#' + p.join('&'));
     },
     'locate'() {
       if (!map || !navigator.geolocation) { toast('Locatie is hier niet beschikbaar.'); return; }
@@ -2141,17 +2273,40 @@
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' || ev.target.tagName !== 'INPUT') return;
-    const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-pin': 'create-game', 'in-title': 'create-game', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'n-game': 'new-game-go', 'in-ppin': 'join', 'c-pin': 'claim-check' };
+    const enter = { 'in-name': 'join', 'in-db': 'save-db', 'in-code': 'lobby-join', 'o-pin': 'org-check', 'a-name': 'player-add-save', 'in-ppin': 'join', 'c-pin': 'claim-check' };
     const act = enter[ev.target.id];
     if (act) { ev.preventDefault(); const btn = $(`[data-act="${act}"]`); if (btn) btn.click(); }
   });
   document.addEventListener('input', (ev) => {
-    if (ev.target.id !== 'w-opts') return;
-    const box = $('#w-prev');
-    if (box) box.innerHTML = wheelPreview(parseOptions(ev.target.value));
+    const el = ev.target;
+    if (el.id === 'w-opts') {
+      const box = $('#w-prev');
+      if (box) box.innerHTML = wheelPreview(parseOptions(el.value));
+      return;
+    }
+    // Velden van de aanmaak-wizard schrijven direct naar de wizard-staat, zodat niets verloren gaat bij een volgende stap.
+    const path = el.dataset ? el.dataset.w : '';
+    if (!path || !ui.wiz) return;
+    const k = path.split('.');
+    if (k[0] === 'p' && ui.wiz.pubs[+k[1]]) ui.wiz.pubs[+k[1]][k[2]] = el.value;
+    else if (k[0] === 'w' && ui.wiz.wheel[+k[1]]) {
+      ui.wiz.wheel[+k[1]][k[2]] = el.value;
+      const box = $('#wiz-prev');
+      if (box) box.innerHTML = wheelPreview(wizWheel());
+    } else if (k.length === 1) ui.wiz[k[0]] = el.value;
   });
+  // Wijst het adres na "terug" of een aangepaste link naar een ander spel (of de lobby), laad dan opnieuw.
+  const urlGame = () => cleanGame(new URLSearchParams(location.hash.replace(/^#/, '')).get('g') || new URLSearchParams(location.search).get('g') || '') || CFG_GAME;
+  window.addEventListener('hashchange', () => { if (urlGame() !== GAME) location.reload(); });
   window.addEventListener('popstate', (ev) => {
+    if (urlGame() !== GAME) { location.reload(); return; }
     const st = ev.state || {};
+    if (ui.wiz) {
+      // Terug in de wizard: een stap terug, of terug naar de lobby.
+      if (st.wz == null) ui.wiz = null; else { ui.wiz.step = clamp(+st.wz || 0, 0, WIZ_STEPS.length - 1); ui.wiz.msg = ''; }
+      render(true);
+      return;
+    }
     ui.spinning = false;
     ui.hole = st.hole || null;
     ui.editing = false;
@@ -2165,7 +2320,7 @@
   // ------------------------------------------------------------ start
   history.replaceState({ hole: ui.hole }, '');
   render(true);
-  if (DB && !LOCAL) {
+  if (DB && !LOCAL && GAME) {
     connect();
     pull();
     flush();

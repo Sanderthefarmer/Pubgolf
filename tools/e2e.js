@@ -7,13 +7,15 @@
 const { chromium } = require('playwright');
 const BASE = process.env.BASE || 'http://localhost:8787';
 const G = 't' + Date.now().toString(36);
-const URL_ = `${BASE}/?db=${BASE}/db&g=${G}`;
+const LOBBY = `${BASE}/?db=${BASE}/db`;
+let URL_ = '';   // link van het spel uit scenario 1, bekend zodra het is aangemaakt
 const SHOTS = process.env.SHOTS || '';
 if (SHOTS) require('fs').mkdirSync(SHOTS, { recursive: true });
 const shot = (page, name, fullPage) => (SHOTS ? page.screenshot({ path: SHOTS + '/' + name + '.png', fullPage: !!fullPage }) : null);
 let fails = 0, geoCalls = 0;
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const says = (page, sel, text) => page.waitForFunction(([s, x]) => { const el = document.querySelector(s); return el && el.textContent.includes(x); }, [sel, text], { timeout: 5000 }).then(() => true).catch(() => false);
 const fits = async (page, label) => { const r = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]); ok(r[0] <= r[1], 'geen horizontale overflow: ' + label + ' (' + r.join('/') + ')'); };
 
 (async () => {
@@ -37,12 +39,40 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   const a = A.page, b = B.page;
 
   // 1. A maakt spel
-  await a.goto(URL_);
-  await a.waitForSelector('#in-title');
-  await shot(a, '01-create');
-  await a.fill('#in-pin', '1234');
-  await a.click('[data-act="create-game"]');
+  // lobby → wizard: spel, kroegen, drankjes, rad, overzicht
+  await a.goto(LOBBY);
+  await a.waitForSelector('[data-act="lobby-new"]');
+  await shot(a, '00-lobby');
+  await a.fill('#in-code', 'bestaatniet');
+  await a.click('[data-act="lobby-join"]');
+  await a.waitForFunction(() => document.querySelector('#lobby-msg').textContent.includes('Geen spel gevonden'), null, { timeout: 5000 }).then(() => ok(true, 'lobby: onbekende spelcode wordt geweigerd')).catch(() => ok(false, 'lobby: onbekende spelcode wordt geweigerd'));
+  await a.click('[data-act="lobby-new"]');
+  await a.waitForSelector('[data-w="title"]');
+  await a.click('[data-do="next"]');
+  ok(await says(a, '#wiz-msg', 'pincode'), 'wizard: zonder organisator-pincode kom je niet verder');
+  await a.fill('[data-w="pin"]', '1234');
+  await shot(a, '00-wizard-spel');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('.wrow');
+  ok(await a.locator('.wrow.on').count() === 14, 'wizard: de 14 kroegen van Zwolle staan aangevinkt');
+  await shot(a, '00-wizard-kroegen');
+  await fits(a, 'wizard kroegen');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('.wpub');
+  ok((await a.inputValue('[data-w="p.7.drink"]')) === 'Guinness', 'wizard: Dublin House staat al op Guinness');
+  await shot(a, '00-wizard-drankjes');
+  await fits(a, 'wizard drankjes');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('#wiz-prev');
+  await shot(a, '00-wizard-rad');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('[data-do="create"]');
+  await shot(a, '00-wizard-overzicht', true);
+  await a.click('[data-do="create"]');
   await a.waitForSelector('#in-name');
+  const CODE = (a.url().match(/g=([a-z0-9]+)/) || [])[1] || '';
+  URL_ = `${LOBBY}#g=${CODE}`;
+  ok(/^[a-z0-9]{5}$/.test(CODE) && (await a.textContent('.gcode')).includes(CODE.toUpperCase()), 'spel krijgt een eigen spelcode en link (' + CODE.toUpperCase() + ')');
   await a.fill('#in-name', 'Sander');
   await a.fill('#in-ppin', '1111');
   await a.click('.emoji >> nth=3');
@@ -56,9 +86,13 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await shot(a, '03-holes');
 
   // 2. B doet mee
-  await b.goto(URL_);
+  await b.goto(LOBBY);
+  await b.waitForSelector('#in-code');
+  await b.fill('#in-code', CODE.toUpperCase());
+  await b.click('[data-act="lobby-join"]');
   await b.waitForSelector('#in-name');
-  ok((await b.textContent('h1')).includes('Pubgolf Zwolle'), 'B ziet de speltitel');
+  ok((await b.textContent('h1')).includes('Pubgolf Zwolle'), 'B doet mee met de spelcode en ziet de speltitel');
+  ok(await b.locator('[data-act="toggle-edit-holes"]').count() === 0, 'wie meedoet is geen organisator');
   await b.fill('#in-name', 'Piet');
   await b.click('[data-act="join"]');
   ok((await b.textContent('#join-msg')).includes('pincode'), 'meedoen zonder pincode kan niet');
@@ -197,11 +231,9 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await b.reload();
   await b.waitForSelector('.tabs');
   ok(await b.locator('#in-name').count() === 0, 'B blijft ingelogd na herladen');
+  ok(await b.locator('.hero').count() === 1, 'na herladen sta je nog in dezelfde hole');
 
   // 11. terugknop
-  await b.goto(URL_);
-  await b.waitForSelector('.tabs');
-  ok(await b.locator('.hero').count() === 1, 'na herladen sta je nog in dezelfde hole');
   await b.click('[data-act="tab"][data-tab="holes"]');
   await b.waitForSelector('.hole');
   await b.click('.hole >> nth=4');
@@ -253,51 +285,31 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   await sleep(400);
   await shot(a, '19-board-final');
 
-  // 14. lokale modus
+  // 14. lokale modus: ook daar lobby en wizard, zonder pincodes
   const C = await mk('C');
-  await C.page.goto(`${BASE}/?db=local&g=${G}`);
-  await C.page.waitForSelector('#in-title');
-  await C.page.click('[data-act="create-game"]');
+  await C.page.goto(`${BASE}/?db=local`);
+  await C.page.waitForSelector('[data-act="lobby-new"]');
+  await C.page.click('[data-act="lobby-new"]');
+  for (let i = 0; i < 4; i++) await C.page.click('[data-do="next"]');
+  await C.page.click('[data-do="create"]');
   await C.page.waitForSelector('#in-name');
   await C.page.fill('#in-name', 'Solo');
   await C.page.click('[data-act="join"]');
   await C.page.waitForSelector('.hole');
-  ok((await C.page.textContent('.status')).includes('Lokaal'), 'lokale modus werkt');
+  ok((await C.page.textContent('.status')).includes('Lokaal') && await C.page.locator('.hole').count() === 14, 'lokale modus werkt');
 
-  // 15. setup-scherm zonder database
+  // 15. setup-scherm zonder database → lobby
   const D = await mk('D');
   await D.page.goto(BASE + '/');
   await D.page.waitForSelector('#in-db');
   await shot(D.page, '20-setup');
   await D.page.fill('#in-db', BASE + '/db/');
   await D.page.click('[data-act="save-db"]');
-  await D.page.waitForSelector('#in-title, #in-name', { timeout: 8000 });
-  ok(true, 'database koppelen via setup-scherm werkt');
-
-  // 16. lokaal spel overzetten naar database
-  const E = await mk('E');
-  const G2 = G + 'x';
-  await E.page.goto(`${BASE}/?db=local&g=${G2}`);
-  await E.page.waitForSelector('#in-title');
-  await E.page.fill('#in-title', 'Lokaal Feest');
-  await E.page.click('[data-act="create-game"]');
-  await E.page.waitForSelector('#in-name');
-  await E.page.fill('#in-name', 'Lokale Lot');
-  await E.page.click('[data-act="join"]');
-  await E.page.waitForSelector('.hole');
-  await E.page.click('.hole >> nth=0');
-  await E.page.click('[data-act="sip-set"][data-n="2"]');
-  await E.page.click('[data-act="score-done"]');
-  await sleep(200);
-  await E.page.goto(`${BASE}/?db=${BASE}/db&g=${G2}`);
-  await E.page.waitForSelector('[data-act="create-from-local"]');
-  await E.page.fill('#in-pin', '4321');
-  await E.page.click('[data-act="create-from-local"]');
-  await E.page.waitForSelector('.tabs');
-  await sleep(800);
-  const remote = await (await fetch(`${BASE}/db/games/${G2}.json`)).json();
-  ok(remote && remote.meta.title === 'Lokaal Feest' && Object.keys(remote.holes).length === 14 && Object.keys(remote.players).length === 1 && !!remote.scores, 'lokaal spel staat in de database');
-  ok((await E.page.textContent('.status')).includes('Live'), 'na overzetten Live en ingelogd');
+  await D.page.waitForSelector('[data-act="lobby-new"]', { timeout: 8000 });
+  ok(true, 'database koppelen via setup-scherm leidt naar de lobby');
+  await D.page.goto(`${LOBBY}#g=zzzzz`);
+  await D.page.waitForSelector('[data-act="to-lobby"]', { timeout: 8000 });
+  ok((await D.page.textContent('h1')).includes('niet gevonden'), 'een link naar een niet-bestaand spel zegt dat duidelijk');
 
   // 17. opdracht bij The Dublin House (hole 8): Split the G
   await b.click('[data-act="tab"][data-tab="holes"]');
@@ -397,36 +409,78 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   ok(/Thee|Koffie/.test(await a.textContent('.spin-result b')), 'draai komt van het eigen rad');
   await sleep(2600);
 
-  // 21. nieuw spel met eigen kroegen
+  // 21. eigen spel via de lobby: kroegen kiezen, volgorde, drankjes vast of rad, drankjes op het rad
   await a.click('[data-act="tab"][data-tab="more"]');
-  await a.click('[data-act="new-game"]');
-  await a.fill('#n-game', 'Feest ' + G);
-  await a.click('[data-act="new-game-go"]');
-  await a.waitForSelector('#c-route');
-  ok(a.url().includes('g=feest-' + G), 'nieuw spel krijgt eigen link');
-  await a.click('#c-route [data-v="empty"]');
-  await a.fill('#in-pin', '1111');
-  await a.click('[data-act="create-game"]');
+  await a.click('[data-act="to-lobby"]');
+  await a.waitForSelector('[data-act="lobby-new"]');
+  ok((await a.textContent('.rejoin')).includes(CODE.toUpperCase()), 'de lobby toont het spel waar je eerder in zat');
+  await a.click('[data-act="lobby-new"]');
+  await a.waitForSelector('[data-w="title"]');
+  await a.fill('[data-w="title"]', 'Eigen Rondje');
+  await a.fill('[data-w="pin"]', '5555');
+  await a.click('[data-do="next"]');
+  await a.click('[data-do="none"]');
+  await a.click('[data-do="next"]');
+  ok(await says(a, '#wiz-msg', 'minstens één kroeg'), 'wizard: zonder kroegen kom je niet verder');
+  for (const i of [7, 2, 0]) await a.click(`[data-do="tog"][data-i="${i}"]`);   // Dublin House, 't Swolsch Café, 't Beugeltje
+  await a.click('[data-do="up"][data-i="7"]');                                // Dublin House één plek omhoog
+  await a.fill('[data-w="nn"]', 'Onze Stamkroeg');
+  await a.fill('[data-w="na"]', 'Dorpsstraat 1');
+  await a.click('[data-do="add"]');
+  await a.waitForFunction(() => document.querySelectorAll('.wrow.on').length === 4, null, { timeout: 5000 }).then(() => ok(true, 'wizard: drie gekozen kroegen plus een eigen kroeg')).catch(() => ok(false, 'wizard: drie gekozen kroegen plus een eigen kroeg'));
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('.wpub');
+  await sleep(200);
+  ok(await a.locator('.wpub').count() === 4, 'wizard: alleen de gekozen kroegen krijgen een drankje');
+  const idx = async (name) => a.evaluate((n) => { const el = [...document.querySelectorAll('.wpub')].find((x) => x.textContent.includes(n)); return el.querySelector('[data-do="type"]').dataset.i; }, name);
+  const iBeugel = await idx('Beugeltje'), iSwolsch = await idx('Swolsch'), iStam = await idx('Stamkroeg');
+  await a.fill(`[data-w="p.${iBeugel}.drink"]`, 'Fluitje');
+  await a.click(`[data-do="par"][data-i="${iBeugel}"][data-d="-1"]`);
+  await a.click(`[data-do="type"][data-i="${iSwolsch}"][data-v="wheel"]`);
+  await a.click(`[data-do="type"][data-i="${iStam}"][data-v="wheel"]`);
+  await sleep(200);
+  ok((await a.inputValue(`[data-w="p.${iBeugel}.drink"]`)) === 'Fluitje', 'wizard: ingevuld drankje blijft staan na andere keuzes');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('#wiz-prev');
+  ok((await a.textContent('.wiz')).includes('Swolsch') && (await a.textContent('.wiz')).includes('Stamkroeg'), 'wizard: toont bij welke kroegen het rad geldt');
+  while (await a.locator('[data-do="wdel"]').count() > 1) { await a.click('[data-do="wdel"] >> nth=0'); await sleep(80); }
+  await a.click('[data-do="next"]');
+  ok(await says(a, '#wiz-msg', 'minstens twee'), 'wizard: een rad heeft minstens twee drankjes nodig');
+  await a.fill('[data-w="w.0.label"]', 'Cola');
+  await a.click('[data-do="wadd"]');
+  await a.waitForSelector('[data-w="w.1.label"]');
+  await a.fill('[data-w="w.1.label"]', 'Tonic');
+  await a.click('[data-do="wpar"][data-i="1"][data-d="1"]');
+  await sleep(150);
+  ok(await a.locator('#wiz-prev svg.wheel path').count() === 2, 'wizard: voorbeeld van het rad volgt de drankjes');
+  await a.click('[data-do="next"]');
+  await a.waitForSelector('[data-do="create"]');
+  const sum = (await a.textContent('.sum')).replace(/\s+/g, ' ');
+  ok(sum.indexOf('Beugeltje') < sum.indexOf('Swolsch') && sum.indexOf('Swolsch') < sum.indexOf('Dublin') && sum.includes('Fluitje · par 2') && sum.includes('Guinness · par 4'), 'wizard: overzicht klopt met volgorde, drankjes en par');
+  await a.goBack();
+  await a.waitForSelector('#wiz-prev');
+  ok((await a.inputValue('[data-w="w.1.label"]')) === 'Tonic', 'terugknop gaat een stap terug en bewaart de invoer');
+  await a.click('[data-do="next"]');
+  await a.click('[data-do="create"]');
   await a.waitForSelector('#in-name');
+  const CODE2 = (a.url().match(/g=([a-z0-9]+)/) || [])[1] || '';
+  ok(CODE2 && CODE2 !== CODE, 'tweede spel krijgt een eigen code');
   await a.fill('#in-name', 'Sander');
   await a.fill('#in-ppin', '1111');
   await a.click('[data-act="join"]');
-  await a.waitForSelector('[data-act="hole-add"]');
-  ok(await a.locator('.hole').count() === 0, 'nieuw spel begint zonder kroegen');
-  await a.click('[data-act="hole-add"]');
-  await a.fill('#h-name', 'Eigen Kroeg');
-  await a.fill('#h-drink', 'Radler');
-  await a.fill('#h-task', 'Zing het volkslied');
-  await a.fill('#h-win', '1');
-  await a.fill('#h-lose', '3');
-  await shot(a, '24-kroeg-bewerken', true);
-  await a.click('[data-act="hole-save"]');
   await a.waitForSelector('.hole');
-  ok((await a.textContent('.hole')).includes('Eigen Kroeg') && (await a.textContent('.hole')).includes('Zing het volkslied'), 'eigen kroeg met opdracht toegevoegd');
+  const holesTxt = (await a.textContent('.view')).replace(/\s+/g, ' ');
+  ok(await a.locator('.hole').count() === 4 && holesTxt.includes('Fluitje · par 2') && holesTxt.includes('Split the G') && holesTxt.includes('Onze Stamkroeg'), 'het spel heeft precies de gekozen kroegen en drankjes');
+  ok(await a.locator('[data-act="toggle-edit-holes"]').count() === 1, 'wie het spel aanmaakt is organisator');
+  await a.click('.hole >> nth=1');
+  await a.waitForSelector('.wheel-legend');
+  const leg = await a.textContent('.wheel-legend');
+  ok(leg.includes('Cola') && leg.includes('Tonic') && leg.includes('par 4') && !leg.includes('Wijn'), 'op het rad staan de drankjes uit de wizard');
+  const other = await (await fetch(`${BASE}/db/games/${CODE}/meta/title.json`)).json();
+  ok(other === 'Pubgolf Zwolle', 'het eerste spel staat er los van en is ongemoeid');
 
   // ================= Scenario: vanavond — 7 spelers, drie teams van 2 en één solo =================
-  const G3 = G + 't';
-  const U3 = `${BASE}/?db=${BASE}/db&g=${G3}`;
+  let U3 = '';
   const O = await mk('O'), P = await mk('P'), Q = await mk('Q');
   const o = O.page, p2 = P.page, q = Q.page;
   const txt = (page, sel) => page.textContent(sel).then((x) => (x || '').replace(/\s+/g, ' ').trim());
@@ -434,11 +488,14 @@ const fits = async (page, label) => { const r = await page.evaluate(() => [docum
   const count = (page, want) => page.waitForFunction((w) => { const b = document.querySelector('.cnum b'); return b && b.textContent === w; }, String(want), { timeout: 20000 }).then(() => true).catch(() => false);
   const forge = (page, act, data) => page.evaluate(([a, d]) => { const b = document.createElement('button'); b.dataset.act = a; Object.assign(b.dataset, d || {}); document.body.appendChild(b); b.click(); b.remove(); }, [act, data || {}]);
 
-  await o.goto(U3);
-  await o.waitForSelector('#in-title');
-  await o.fill('#in-pin', '1234');
-  await o.click('[data-act="create-game"]');
+  await o.goto(LOBBY);
+  await o.waitForSelector('[data-act="lobby-new"]');
+  await o.click('[data-act="lobby-new"]');
+  await o.fill('[data-w="pin"]', '1234');
+  for (let i = 0; i < 4; i++) await o.click('[data-do="next"]');
+  await o.click('[data-do="create"]');
   await o.waitForSelector('#in-name');
+  U3 = `${LOBBY}#g=${(o.url().match(/g=([a-z0-9]+)/) || [])[1]}`;
   await o.fill('#in-name', 'Sander');
   await o.fill('#in-ppin', '1111');
   await o.click('[data-act="join"]');

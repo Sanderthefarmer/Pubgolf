@@ -22,7 +22,19 @@ Een opgeslagen score kan de speler nog twee minuten herstellen (`editMinutes` in
 
 Deze regels zitten in de app. De database zelf staat open (test mode), dus iemand met technische kennis kan er rechtstreeks in schrijven. Voor een avond met vrienden is dat genoeg; voor een wedstrijd met vreemden niet.
 
-De standaardroute is Pubgolf Zwolle met 14 kroegen. Bij het aanmaken van een spel kies je die route of begin je leeg.
+## Lobby en spelcodes
+
+De link opent een lobby. Daar start je een eigen spel of doe je mee met een spelcode van vijf tekens. Elk spel heeft een eigen link, eigen kroegen, spelers en scores, en de lobby onthoudt per toestel welke spellen je opende.
+
+Een spel maak je aan in vijf stappen:
+
+1. **Het spel**: naam en organisator-pincode. Wie het spel aanmaakt is de organisator.
+2. **Kroegen**: vink de kroegen aan die meedoen, zet ze op volgorde en voeg eigen kroegen toe. De 14 kroegen van Pubgolf Zwolle staan klaar.
+3. **Drankjes**: per kroeg een vast drankje met par, of het rad.
+4. **Het rad**: welke drankjes erop staan en of een getrokken drankje verdwijnt.
+5. **Overzicht** en aanmaken.
+
+Alles is daarna nog aan te passen via **Kroegen bewerken** en **Het rad instellen**.
 
 Er is geen build-stap. Het is één statische pagina (`index.html`, `app.js`, `style.css`).
 
@@ -36,7 +48,7 @@ De app synchroniseert via een gratis Firebase Realtime Database.
 2. Kies links **Build → Realtime Database → Create Database**, locatie België, en start in **test mode**.
 3. Kopieer de URL bovenaan (`https://…-default-rtdb.europe-west1.firebasedatabase.app`).
 
-Zet die URL in `config.js` bij `db`, of plak hem in de app zelf. In dat laatste geval zit de URL in de uitnodigingslink.
+Zet die URL in `config.js` bij `db`, of plak hem in de app zelf. In dat laatste geval zit de URL in de uitnodigingslink en moet wie via de lobby wil meedoen hem ook eerst plakken.
 
 Test mode betekent dat iedereen met de URL kan lezen en schrijven. Firebase sluit die toegang na 30 dagen automatisch.
 
@@ -46,15 +58,14 @@ Zet de bestanden op een statische host. Met GitHub Pages: **Settings → Pages �
 
 ## Op de avond zelf
 
-1. De organisator opent de site, maakt het spel aan en kiest een pincode.
-2. Op het tabblad **Holes** tik je op **Kroegen bewerken** om per kroeg het drankje, de par, een rad, een opdracht of straffen in te stellen. Het rad zelf stel je in via **Meer → Het rad instellen**.
-3. Deel de link of QR-code via **Meer → Nodig iedereen uit**. Iedereen kiest een naam en een pincode van 4 cijfers.
-4. Deel de teams in via **Meer → Teams indelen**, voordat de eerste hole begint. Spelers zonder telefoon voeg je toe via **Speler toevoegen**.
-5. Bij elke kroeg: open de hole, draai eventueel aan het rad, tik bij elke teug en tik op **Glas leeg**.
+1. De organisator opent de site, kiest **Nieuw spel starten** en loopt de stappen door.
+2. Deel de link of QR-code via **Meer → Nodig iedereen uit**, of geef de spelcode door. Iedereen kiest een naam en een pincode van 4 cijfers.
+3. Deel de teams in via **Meer → Teams indelen**, voordat de eerste hole begint. Spelers zonder telefoon voeg je toe via **Speler toevoegen**.
+4. Bij elke kroeg: open de hole, draai eventueel aan het rad, tik bij elke teug en tik op **Glas leeg**.
 
 Onderweg: is een kroeg dicht of te druk, laat hem dan vervallen via **Bewerken**. Is een vast drankje er niet, pas het dan bij de kroeg aan. Telefoon leeg? Log met je naam en pincode in op een ander toestel, of laat je teamgenoot of de organisator tikken.
 
-Een nieuwe avond met een schone lei? Gebruik **Meer → Alle scores wissen**, of start via **Meer → Nieuw spel met eigen kroegen** een spel met een eigen link, eigen kroegen en eigen scores.
+Een nieuwe avond met een schone lei? Start in de lobby een nieuw spel, of gebruik **Meer → Alle scores wissen** om hetzelfde spel opnieuw te spelen.
 
 ## Kaart
 
@@ -62,7 +73,7 @@ De kaart gebruikt kaarttegels van OpenStreetMap. Adressen worden in de browser o
 
 ## Zonder database
 
-Kies op het startscherm **Alleen op dit toestel spelen**. Eén telefoon houdt dan de scores van iedereen bij. Koppel je later alsnog een database, dan kun je het lokale spel overnemen.
+Kies op het startscherm **Alleen op dit toestel spelen**. Eén telefoon houdt dan de scores van iedereen bij; lokale spellen staan los van spellen in een database.
 
 ## Lokaal ontwikkelen
 
